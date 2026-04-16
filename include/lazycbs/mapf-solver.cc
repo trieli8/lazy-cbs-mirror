@@ -7,6 +7,8 @@
 
 #include <lazycbs/compute_heuristic.h>
 
+#include <cstdarg>
+
 // #define DEBUG_UC
 // #define MAPF_NO_RECTANGLES
 
@@ -17,11 +19,16 @@ static ::std::pair<int, bool*> mapf_get_res_table(MAPF_Solver* m, int excl) {
 }
 
 MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB)
+  : MAPF_Solver(_ml, _al, _egr, UB, false) {
+}
+
+MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose)
   : ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols)
   , reservation_table(map_size, false), cmap(map_size, -1), nmap(map_size, -1)
   , agent_set(al->num_of_agents)
   , cost_ub(UB)
-  , HL_conflicts(0) {
+  , HL_conflicts(0)
+  , verbose(_verbose) {
 
     int num_of_agents = al->num_of_agents;
     // int map_size = ml->rows*ml->cols;
@@ -40,6 +47,20 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
       penalty_table.insert(::std::make_pair(cv.p, penalties.size()));
       penalties.push(penalty { cv.p, geas::from_int(pf->pathCost()) });
     }
+
+    tracef("MAPF init: agents=%d map=%dx%d initial_cost_lb=%d cost_ub=%d",
+      num_of_agents, ml->rows, ml->cols, cost_lb, cost_ub);
+}
+
+void MAPF_Solver::tracef(const char* fmt, ...) const {
+  if(!verbose)
+    return;
+
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  fprintf(stderr, "\n");
+  va_end(ap);
 }
 
 // Get the local reservation table for agent excl.
@@ -120,6 +141,7 @@ void log_conflict(MAPF_Solver& mapf) {
 
 bool MAPF_Solver::buildPlan(geas::vec<geas::patom_t>& assumps) {
   s.clear_assumptions();  
+  tracef("buildPlan: solving with %d assumption(s)", (int) assumps.size());
   
   // Apply the assumptions.
   for(geas::patom_t at : assumps) {
@@ -137,7 +159,9 @@ retry:
     // Candidate optimal solution. Check for conflicts.
     case geas::solver::SAT:
       // First, finesse the plan to avoid any remaining conflicts.
+      tracef("buildPlan: SAT, checking for conflicts");
       if(!resolveConflicts()) {
+        tracef("buildPlan: conflict resolution failed, adding conflict and retrying");
         s.restart();
 #ifdef DEBUG_UC
         log_conflict(*this);
@@ -147,6 +171,7 @@ retry:
         goto retry;
       }
       // If we succeeded, done.
+      tracef("buildPlan: SAT and conflict-free");
       return true;
     case geas::solver::UNKNOWN:
       throw SolveAborted { };
@@ -164,6 +189,7 @@ bool MAPF_Solver::minimizeCost(void) {
   for(Agent_PF* p : pathfinders) {
     cost_lb += p->pathCost();
   }
+  tracef("minimizeCost: initial lower bound %d", cost_lb);
 #ifdef DEBUG_UC
   fprintf(stderr, "%%%% Initial bound: %d\n", cost_lb);
 #endif
@@ -189,6 +215,7 @@ bool MAPF_Solver::minimizeCost(void) {
         return false;
         */
       cost_lb += processCore(core);
+      tracef("minimizeCost: core size %d -> lower bound %d", (int) core.size(), cost_lb);
       apply_penalties(*this);
 #ifdef DEBUG_UC
       fprintf(stderr, "%%%% Found core of size (%d), current lower bound %d\n", core.size(), cost_lb);
@@ -207,8 +234,12 @@ void MAPF_Solver::printStats(FILE* f) const {
     LL_num_expanded += p->num_expanded;
     LL_executions += p->num_executions;
   }
-  fprintf(f, "%d ; %d ; %d ; %d ; %d ; %d", cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, LL_executions);
-  // ::std::cout << cost_lb << " ; " << s.data->stats.conflicts << " ; " << LL_num_expanded << " ; " << LL_num_generated << " ; " << HL_conflicts << " ; " << LL_executions;
+  fprintf(f,
+    "cost_lb=%d, solver_conflicts=%d, ll_expanded=%d, ll_generated=%d, hl_conflicts=%d, ll_executions=%d",
+    cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, LL_executions);
+  // ::std::cout << "cost_lb=" << cost_lb << ", solver_conflicts=" << s.data->stats.conflicts
+  //             << ", ll_expanded=" << LL_num_expanded << ", ll_generated=" << LL_num_generated
+  //             << ", hl_conflicts=" << HL_conflicts << ", ll_executions=" << LL_executions;
 }
 
 void MAPF_Solver::printPaths(FILE* f) const {
@@ -419,20 +450,20 @@ bool MAPF_Solver::checkForConflicts(void) {
 
     for(int ai = 0; ai < pathfinders.size(); ++ai) {
       int loc = agentPosition(pathfinders[ai], t);
-      if(nmap[loc] >= 0) {
-        // Already occupied.
-        int aj(nmap[loc]);
-        int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
-        int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
+	    if(nmap[loc] >= 0) {
+	        // Already occupied.
+	        int aj(nmap[loc]);
+	        int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
+	        int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
         int dy2 = row_of(agentPosition(pathfinders[aj], t)) - row_of(agentPosition(pathfinders[aj], t-1));
         int dx2 = col_of(agentPosition(pathfinders[aj], t)) - col_of(agentPosition(pathfinders[aj], t-1));
 #ifdef MAPF_NO_RECTANGLES
         goto fallback;
 #endif
-        if(dx1 != dx2 && dy1 != dy2) {
-          // This is a rectangle conflict
-          int dy(dy1 + dy2);
-          int dx(dx1 + dx2);
+	        if(dx1 != dx2 && dy1 != dy2) {
+	          // This is a rectangle conflict
+	          int dy(dy1 + dy2);
+	          int dx(dx1 + dx2);
           
           // Make sure ai is the horizontal agent.
           if(dx2)
@@ -488,12 +519,18 @@ bool MAPF_Solver::checkForConflicts(void) {
           assert(dy * (row_of(eV) - row_of(eH)) >= 0);
           assert(dx * (col_of(eH) - col_of(eV)) >= 0);
            
-          int locS(ml->linearize_coordinate(row_of(sV), col_of(sH)));
-          int locE(ml->linearize_coordinate(row_of(eV), col_of(eH)));
-          int t0(stH - abs(row_of(sH) - row_of(locS)));
-          assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
-          new_conflicts.push(conflict::barrier(t0, ai, aj, locS, locE));
-        } else {
+	          int locS(ml->linearize_coordinate(row_of(sV), col_of(sH)));
+	          int locE(ml->linearize_coordinate(row_of(eV), col_of(eH)));
+	          int t0(stH - abs(row_of(sH) - row_of(locS)));
+	          assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
+	          tracef(
+	            "checkForConflicts: rectangle t=%d agents=(%d,%d) entry=(%d,%d)->(%d,%d) exit=(%d,%d)->(%d,%d) t0=%d",
+	            t, ai, aj,
+	            row_of(sH), col_of(sH), row_of(sV), col_of(sV),
+	            row_of(eH), col_of(eH), row_of(eV), col_of(eV),
+	            t0);
+	          new_conflicts.push(conflict::barrier(t0, ai, aj, locS, locE));
+	        } else {
 #ifdef MAPF_NO_RECTANGLES
         fallback:
 #endif
@@ -743,11 +780,14 @@ geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int 
 bool MAPF_Solver::addConflict(void) {
   HL_conflicts++;
   for(auto new_conflict : new_conflicts) {
-    if(new_conflict.type == C_BARRIER) {
-      int aH(new_conflict.a1);
-      int aV(new_conflict.a2);
-      int p_s(new_conflict.b.s_loc);
-      int p_e(new_conflict.b.e_loc);
+	    if(new_conflict.type == C_BARRIER) {
+	      int aH(new_conflict.a1);
+	      int aV(new_conflict.a2);
+	      int p_s(new_conflict.b.s_loc);
+	      int p_e(new_conflict.b.e_loc);
+
+	      tracef("addConflict: rectangle t=%d agents=(%d,%d) corners=(%d,%d)->(%d,%d)",
+	        new_conflict.timestamp, aH, aV, row_of(p_s), col_of(p_s), row_of(p_e), col_of(p_e));
 
       geas::vec<geas::clause_elt> barrier_atoms;
 
@@ -759,29 +799,38 @@ bool MAPF_Solver::addConflict(void) {
       int h_delta(row_of(p_s) < row_of(p_e) ? ml->cols : -ml->cols);
       
       // assert(checkBarrierViolated(aH, s_time - dt, p_s - dt*h_delta, h_delta, h_dur + dt));
-      BarrierDir dH(row_of(p_s) < row_of(p_e) ? DOWN : UP);
-      if(s_time > 0 || pathfinders[aH]->engine.start_location != p_s - dt*h_delta) {
-        barrier_atoms.push(getBarrier(aH, dH, s_time - dt, p_s - dt*h_delta, h_dur + dt));
-      }
+	      BarrierDir dH(row_of(p_s) < row_of(p_e) ? DOWN : UP);
+	      if(s_time > 0 || pathfinders[aH]->engine.start_location != p_s - dt*h_delta) {
+	        tracef("addConflict: rectangle horizontal barrier agent=%d start_t=%d start=(%d,%d) dur=%d delta=%d",
+	          aH, s_time - dt, row_of(p_s), col_of(p_s), h_dur + dt, h_delta);
+	        barrier_atoms.push(getBarrier(aH, dH, s_time - dt, p_s - dt*h_delta, h_dur + dt));
+	      }
 
-      int eh_start(ml->linearize_coordinate(row_of(p_s), col_of(p_e)));
-      int eh_time(s_time + abs(col_of(p_e) - col_of(p_s)));
-      barrier_atoms.push(getBarrier(aH, dH, eh_time - dt, eh_start - dt*h_delta, h_dur+dt));
+	      int eh_start(ml->linearize_coordinate(row_of(p_s), col_of(p_e)));
+	      int eh_time(s_time + abs(col_of(p_e) - col_of(p_s)));
+	      tracef("addConflict: rectangle horizontal barrier agent=%d start_t=%d start=(%d,%d) dur=%d delta=%d",
+	        aH, eh_time - dt, row_of(p_s), col_of(p_e), h_dur + dt, h_delta);
+	      barrier_atoms.push(getBarrier(aH, dH, eh_time - dt, eh_start - dt*h_delta, h_dur+dt));
 
-      int v_dur(1 + abs(col_of(p_e) - col_of(p_s)));
-      int v_delta(col_of(p_s) < col_of(p_e) ? 1 : -1);
-      BarrierDir dV(col_of(p_s) < col_of(p_e) ? RIGHT : LEFT);
+	      int v_dur(1 + abs(col_of(p_e) - col_of(p_s)));
+	      int v_delta(col_of(p_s) < col_of(p_e) ? 1 : -1);
+	      BarrierDir dV(col_of(p_s) < col_of(p_e) ? RIGHT : LEFT);
 
-      if(s_time > 0 || pathfinders[aV]->engine.start_location != p_s - dt*v_delta) {
-        barrier_atoms.push(getBarrier(aV, dV, s_time - dt, p_s - dt*v_delta, v_dur+dt));
-      }
+	      if(s_time > 0 || pathfinders[aV]->engine.start_location != p_s - dt*v_delta) {
+	        tracef("addConflict: rectangle vertical barrier agent=%d start_t=%d start=(%d,%d) dur=%d delta=%d",
+	          aV, s_time - dt, row_of(p_s), col_of(p_s), v_dur+dt, v_delta);
+	        barrier_atoms.push(getBarrier(aV, dV, s_time - dt, p_s - dt*v_delta, v_dur+dt));
+	      }
 
-      int ev_start(ml->linearize_coordinate(row_of(p_e), col_of(p_s)));
-      int ev_time(s_time + abs(row_of(p_e) - row_of(p_s)));
-      barrier_atoms.push(getBarrier(aV, dV, ev_time - dt, ev_start - dt*v_delta, v_dur+dt));
+	      int ev_start(ml->linearize_coordinate(row_of(p_e), col_of(p_s)));
+	      int ev_time(s_time + abs(row_of(p_e) - row_of(p_s)));
+	      tracef("addConflict: rectangle vertical barrier agent=%d start_t=%d start=(%d,%d) dur=%d delta=%d",
+	        aV, ev_time - dt, row_of(p_e), col_of(p_s), v_dur+dt, v_delta);
+	      barrier_atoms.push(getBarrier(aV, dV, ev_time - dt, ev_start - dt*v_delta, v_dur+dt));
 
-      // One of the barriers must be active
-      add_clause(*s.data, barrier_atoms);
+	      // One of the barriers must be active
+	      add_clause(*s.data, barrier_atoms);
+	      tracef("addConflict: rectangle encoded as %d barrier atom(s)", (int) barrier_atoms.size());
 
       /*
       if(new_conflict.timestamp == 0) {
@@ -843,6 +892,8 @@ bool MAPF_Solver::addConflict(void) {
       int loc2 = new_conflict.p.loc2;
       if(loc2 > loc1)
         ::std::swap(loc1, loc2);
+
+      tracef("addConflict: mutex t=%d agents=(%d,%d) locs=(%d,%d)", new_conflict.timestamp, new_conflict.a1, new_conflict.a2, loc1, loc2);
         
       cons_key k { new_conflict.timestamp, loc1, loc2 };
       auto it(cons_map.find(k));
@@ -972,6 +1023,7 @@ bool MAPF_MinCost(MAPF_Solver& mapf) {
     penalty_table.insert(::std::make_pair(id, penalties.size()));
     penalties.push(MAPF_Solver::penalty { id, geas::from_int(p->pathCost()) });
   }
+  mapf.tracef("MAPF_MinCost: initial lower bound %d", cost_lb);
 #ifdef DEBUG_UC
   fprintf(stderr, "%%%% Initial bound: %d\n", cost_lb);
 #endif
@@ -1019,6 +1071,7 @@ bool MAPF_MinCost(MAPF_Solver& mapf) {
     }
     cost_lb += Dmin;
     mapf.cost_lb = cost_lb;
+    mapf.tracef("MAPF_MinCost: core size %d -> lower bound %d", (int) core.size(), cost_lb);
 #ifdef DEBUG_UC
       fprintf(stderr, "%%%% Found core of size (%d), current lower bound %d\n", core.size(), cost_lb);
 #endif

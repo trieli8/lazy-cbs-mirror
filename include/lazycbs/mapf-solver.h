@@ -118,6 +118,7 @@ class MAPF_Solver {
   };
 
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub);
+  MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose);
 
   // Problem information
   const  MapLoader* ml;
@@ -150,6 +151,7 @@ class MAPF_Solver {
   ::std::unordered_map<geas::pid_t, int> penalty_table;
   int cost_lb;
   int cost_ub;
+  bool verbose;
 
   // How many high-level conflicts have been processed?
   int HL_conflicts;
@@ -181,6 +183,7 @@ class MAPF_Solver {
   int monotoneSubchainEnd(int dy, int dx, int ai, int t) const;
 
   ::std::pair<int, bool*> retrieve_reservation_table(int ai);
+  void tracef(const char* fmt, ...) const;
 
   ~MAPF_Solver();
 };

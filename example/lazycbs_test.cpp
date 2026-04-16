@@ -53,14 +53,17 @@ int main(int argc, char* argv[]) {
   po::options_description desc("Allowed options");
 
   std::string inputFile;
+  bool verbose = false;
   desc.add_options()("help", "produce help message")(
       "input,i", po::value<std::string>(&inputFile)->required(),
-      "input file (YAML)");
+      "input file (YAML)")(
+      "verbose,v", "enable MAPF solver logging");
 
   try {
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
+    verbose = vm.count("verbose") != 0u;
 
     if (vm.count("help") != 0u) {
       std::cout << desc << "\n";
@@ -106,7 +109,7 @@ int main(int argc, char* argv[]) {
 
   // read the egraph (egraph file, experience_weight, weigthedastar_weight)
   lazycbs::EgraphReader egr;
-lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8);
+  lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8, verbose);
 
   //ofstream res_f;
   //res_f.open(results_fname, ios::app);  // append the results file
@@ -130,6 +133,12 @@ lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8);
   //mapf_icts.search(mapf, starts, &solution1);//
   if (success) {
     std::cout << "Planning successful! " << std::endl;
+    if (verbose) {
+      std::cerr << "MAPF stats: ";
+      mapf1.printStats(stderr);
+      std::cerr << std::endl;
+      mapf1.printPaths(stderr);
+    }
 
     std::ofstream out("../example/output_lazycbs.yaml");
     out << "statistics:" << std::endl;
