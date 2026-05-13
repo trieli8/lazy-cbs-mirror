@@ -9,9 +9,6 @@
 
 using boost::heap::fibonacci_heap;
 using boost::heap::compare;
-
-
-using namespace std;
 namespace lazycbs{
 class Node {
  public:
@@ -32,7 +29,7 @@ class Node {
   //         Hence, to achieve min-Head, we return true if lhs>rhs
   ///////////////////////////////////////////////////////////////////////////////
   
-  // the following is used to comapre nodes in the OPEN list
+  // Compare nodes by f-value, then prefer larger g-values to break ties.
   struct compare_node {
     // returns true if n1 > n2 (note -- this gives us *min*-heap).
     bool operator()(const Node* n1, const Node* n2) const {
@@ -42,7 +39,7 @@ class Node {
     }
   };  // used by OPEN (heap) to compare nodes (top of the heap has min f-val, and then highest g-val)
 
-  // the following is used to comapre nodes in the FOCAL list
+  // Compare nodes in FOCAL by conflicts first, then by f-value, then by g-value.
   struct secondary_compare_node {
     // returns true if n1 > n2
     bool operator()(const Node* n1, const Node* n2) const {
@@ -55,7 +52,7 @@ class Node {
     }
   };  // used by FOCAL (heap) to compare nodes (top of the heap has min number-of-conflicts)
 
-  // the following is used to comapre nodes in the TANSEL_FOCAL list (TCBS)
+  // Compare TCBS nodes by conflicts first, then by highway heuristic.
   struct secondary_hwy_compare_node {
     // returns true if n1 > n2
     bool operator()(const Node* n1, const Node* n2) const {
@@ -80,7 +77,7 @@ class Node {
   Node();
   Node(const Node& other);
   Node(int id, double g_val, double h_val, Node* parent, int timestep, int num_internal_conf = 0, bool in_openlist = false, double g_hwy_val = 0, double h_hwy_val = 0);
-  inline double getFVal() const {return g_val + h_val;}
+  inline double getFVal() const { return g_val + h_val; }
   ~Node();
 
   // The following is used by googledensehash for checking whether two nodes are equal
@@ -92,15 +89,12 @@ class Node {
     }
   };
 
-  // The following is used by googledensehash for generating the hash value of a nodes
-  // /* TODO:  */his is needed because otherwise we'll have to define the specilized template inside std namespace
+  // Hash nodes by id and timestep so sparse hash tables can store them directly.
   struct NodeHasher {
     std::size_t operator()(const Node* n) const {
-      // cout << "COMPUTE HASH: " << *n << " ; Hash=" << hash<int>()(n->id) << endl;
-      // cout << "   Pointer Address: " << n << endl;
-      size_t id_hash = std::hash<int>()(n->id);
-      size_t timestep_hash = std::hash<int>()(n->timestep);
-      return ( id_hash ^ (timestep_hash << 1) );
+      const std::size_t id_hash = std::hash<int>()(n->id);
+      const std::size_t timestep_hash = std::hash<int>()(n->timestep);
+      return id_hash ^ (timestep_hash << 1);
     }
   };
 };

@@ -1,37 +1,10 @@
 #ifndef GMAPF__RESERVATION__H
 #define GMAPF__RESERVATION__H
 #include <geas/engine/persist.h>
-// For strong branching, we want two sorts of reservation tables; for each
-// <loc, time>, we need to be able to track:
-// - Which (if any) agent is it reserved for, and
-// - Which agents would _like_ to reserve it (have a candidate path through the location).
-/*
-struct reservation {
-  enum { BLOCK_SZ = 4 };
 
-  unsigned int block(int r, int c, int t) {
-    return Cblocks * ( Rblocks * (t / BLOCK_SZ) + (r / BLOCK_SZ))  + (c / BLOCK_SZ);
-  }
-  unsigned int block_offset(int r, int c, int t) {
-    return BLOCK_SZ * (BLOCK_SZ * (t % BLOCK_SZ) + (r % BLOCK_SZ)) + (c % BLOCK_SZ);
-  }
-
-  unsigned int Rblocks;
-  unsigned int Cblocks;
-
-  struct block {
-
-  };
-};
-*/
-// Not enough to record whether a given loctime is assigned, we also need
-// to be able to reconstruct why.
-// But! (1) Most of the time, we don't care about the reason, we just need to make
-// lookups fast. And (2) for a given agent, the reason is always var_of(loctime) != ai.
-// Still need to do allocations in a block structure, because we want trailing to work
-// automagically.
-// Alternatively, we can do the usual thing of recording changes, which saves us an additional
-// indirection on each lookup...
+// Reservation table used by strong branching:
+// record which loctime entries are assigned, plus the reason variable for each
+// assignment so the solver can trail and restore the state cheaply.
 namespace lazycbs {
 struct reservation {
   static unsigned int BLOCK_MASK(void) { return (1<<6)-1; }
@@ -84,7 +57,6 @@ struct reservation {
   template<class P>
   void reserve(P& p, uint64_t t) {
     unsigned int t_block(BLOCK_OF(t));
-    unsigned int t_idx(LOC_IDX(t)); 
     uint64_t t_mask(LOC_BIT(t));
     if(!assigned[t_block] & t_mask) {
       assigned[t_block] |= t_mask;

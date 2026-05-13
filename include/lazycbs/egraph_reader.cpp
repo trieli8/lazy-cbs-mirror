@@ -1,10 +1,5 @@
 #include <lazycbs/egraph_reader.h>
-#include <iostream>
 #include <fstream>
-#include <utility>
-#include <vector>
-#include <string>
-#include <lazycbs/map_loader.h>
 
 namespace lazycbs{
 // generate the empty egraph ------------------------------------
@@ -107,24 +102,6 @@ void EgraphReader::printToDOT(string fname) {
   */
 }
 
-/* Old
-bool EgraphReader::isEdge(int n1, int n2) const {
-  eg_Vertex c_u1, c_u2;  // declaring vertices u1,u2
-  dense_hash_map< int, eg_Vertex >::const_iterator const_it;
-  const_it = nodes.find(n1);
-  if ( const_it == nodes.end() )  // n1 is not in Egraph
-    return false;
-  else
-    c_u1 = const_it->second;  // (used to be =nodes[n1]). But nodes[n1] is not const. However, const_it->second is...
-  const_it = nodes.find(n2);
-  if ( const_it == nodes.end() )  // n2 is not in Egraph
-    return false;
-  else
-    c_u2 = const_it->second;  //  (used to be =nodes[n1]). nodes[n2] is not const. However, const_it->second is...
-  // edge(u,v,g) returns pair<edge_desc,bool>
-  return boost::edge(c_u1, c_u2, *e_graph).second;
-}
-*/
 bool EgraphReader::isEdge(int n1, int n2) const {
   eg_Vertex c_u1, c_u2;  // declaring vertices u1,u2
   dense_hash_map< int, eg_Vertex >::const_iterator const_it;
@@ -206,7 +183,9 @@ void EgraphReader::addEdge(int n1_id, int n2_id) {
 }
 
 void EgraphReader::addVertices(const vector<int>* v_list) {
-  for (size_t i = 0; i < v_list->size() - 1; i++)
+  if (v_list->size() < 2)
+    return;
+  for (size_t i = 0; i + 1 < v_list->size(); ++i)
     addEdge(v_list->at(i) , v_list->at(i + 1));
 }
 
@@ -216,10 +195,10 @@ void EgraphReader::saveToFile(string fname) {
   ofstream myfile;
   myfile.open(fname);
   myfile << "p edges " << num_vertices(*e_graph) << " " << num_edges(*e_graph) << endl;  // write header line
-  vector < pair<int, int> >* edges = getAllEdges();
-  for (vector< pair<int, int> >::const_iterator it = edges->begin(); it != edges->end(); ++it)
-    myfile << "e " << it->first << " " << it->second << endl;
-  delete(edges);
+  vector<pair<int, int>>* edges = getAllEdges();
+  for (const auto& edge : *edges)
+    myfile << "e " << edge.first << " " << edge.second << endl;
+  delete edges;
   myfile.close();
 }
 

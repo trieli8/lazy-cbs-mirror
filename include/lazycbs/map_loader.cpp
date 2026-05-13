@@ -2,45 +2,40 @@
 #ifndef MAPLOADER_CPP
 #define MAPLOADER_CPP
 #include <lazycbs/map_loader.h>
-#include <string>
+#include <algorithm>
 #include <cstring>
-#include <iostream>
-#include <cassert>
 #include <fstream>
-#include<boost/tokenizer.hpp>
+#include <iostream>
+#include <boost/tokenizer.hpp>
 #include <stdlib.h>
 #include <stdio.h>
 #include <climits>
 #include <float.h>
-#include <vector>
-#include <iostream>
-#include <fstream>
 
 using namespace boost;
 using namespace std;
 namespace lazycbs{
 MapLoader::MapLoader(int rows, int cols) {
   map_filename = "NEW_EMPTY";
-  int i,j;
+  int i, j;
   this->rows = rows;
   this->cols = cols;
   this->my_map = new bool[rows*cols];
-  for (i=0; i<rows*cols; i++)
-    this->my_map[i] = false;
+  std::fill_n(this->my_map, rows * cols, false);
   actions_offset = new int[5];
   actions_offset[0] = 0; actions_offset[1] = -cols; actions_offset[2] = 1; actions_offset[3] = cols; actions_offset[4] = -1; // [WAIT, NORTH, EAST, SOUTH, WEST]
-  // add padding
-  i=0;
-  for (j=0; j<cols; j++)
+  // Add a blocked border so neighbor expansion never needs boundary checks.
+  i = 0;
+  for (j = 0; j < cols; j++)
     this->my_map[linearize_coordinate(i,j)] = true;
-  i=rows-1;
-  for (j=0; j<cols; j++)
+  i = rows - 1;
+  for (j = 0; j < cols; j++)
     this->my_map[linearize_coordinate(i,j)] = true;
-  j=0;
-  for (i=0; i<rows; i++)
+  j = 0;
+  for (i = 0; i < rows; i++)
     this->my_map[linearize_coordinate(i,j)] = true;
-  j=cols-1;
-  for (i=0; i<rows; i++)
+  j = cols - 1;
+  for (i = 0; i < rows; i++)
     this->my_map[linearize_coordinate(i,j)] = true;
 
 }
@@ -49,50 +44,43 @@ MapLoader::MapLoader(string fname){
   map_filename = string(fname);
   string line;
   ifstream myfile (fname.c_str());
-  bool* my_map;
+  bool* loaded_map;
   if (myfile.is_open()) {
     getline (myfile,line);
     char_separator<char> sep(",");
     tokenizer< char_separator<char> > tok(line, sep);
     tokenizer< char_separator<char> >::iterator beg=tok.begin();
-    int rows = atoi ( (*beg).c_str() ); // read number of rows
+    const int parsed_rows = atoi((*beg).c_str()); // read number of rows
     beg++;
-    int cols = atoi ( (*beg).c_str() ); // read number of cols
-    my_map = new bool[rows*cols];
-    for (int i=0; i<rows*cols; i++)
-      my_map[i] = false;
+    const int parsed_cols = atoi((*beg).c_str()); // read number of cols
+    loaded_map = new bool[parsed_rows * parsed_cols];
+    std::fill_n(loaded_map, parsed_rows * parsed_cols, false);
 
-    // read map (and start/goal locations)
-  for (int i=0; i<rows; i++) {
+    // Read the grid row-by-row. "S" and "G" are marked as traversable cells.
+    for (int i = 0; i < parsed_rows; i++) {
       getline (myfile, line);
       tokenizer< char_separator<char> > col_tok(line, sep);
       tokenizer< char_separator<char> >::iterator c_beg=col_tok.begin();
-      int currCol = 0;
-      for (int j=0; j<cols; j++) {
-            if ( (*c_beg).compare("S") == 0 ) {
-                  my_map[cols*i + currCol] = false;
-                  start_loc = cols*i + currCol;
-            } else if ( (*c_beg).compare("G") == 0 ) {
-                  my_map[cols*i + currCol] = false;
-                  goal_loc = cols*i + currCol;
-            } else {
-                  int currCell = atoi ( (*c_beg).c_str() );
-                  if (currCell == 1)
-                        my_map[cols*i + currCol] = true;
-                  else
-                        my_map[cols*i + currCol] = false;
-            }
-            c_beg++;
-            currCol++;
+      for (int j = 0; j < parsed_cols; j++, ++c_beg) {
+        const int loc = parsed_cols * i + j;
+        if ((*c_beg).compare("S") == 0) {
+          loaded_map[loc] = false;
+          start_loc = loc;
+        } else if ((*c_beg).compare("G") == 0) {
+          loaded_map[loc] = false;
+          goal_loc = loc;
+        } else {
+          loaded_map[loc] = atoi((*c_beg).c_str()) == 1;
+        }
       }
-  }
+    }
     myfile.close();
-    this->rows = rows;
-    this->cols = cols;
-    this->my_map = my_map;
-    // initialize actions_offset array
+    this->rows = parsed_rows;
+    this->cols = parsed_cols;
+    this->my_map = loaded_map;
+    // Initialize action offsets once the final column count is known.
     actions_offset = new int[5];
-    actions_offset[0] = 0; actions_offset[1] = -cols; actions_offset[2] = 1; actions_offset[3] = cols; actions_offset[4] = -1;
+    actions_offset[0] = 0; actions_offset[1] = -parsed_cols; actions_offset[2] = 1; actions_offset[3] = parsed_cols; actions_offset[4] = -1;
   }
   else
     cerr << "Map file not found." << std::endl;
@@ -101,25 +89,25 @@ MapLoader::MapLoader(string fname){
 MapLoader::MapLoader(int rows, int cols, std::vector<std::pair<int, int> > obstacles){
   this->rows = rows+2;
   this->cols = cols+2;
-  my_map = new bool[this->rows*this->cols];
+  bool* loaded_map = new bool[this->rows*this->cols];
   for (int i=0; i<this->rows*this->cols; i++)
-      my_map[i] = false;
+      loaded_map[i] = false;
   for(int i=0; i<this->rows; i++){
-    my_map[this->cols*i+0] = true;
-    my_map[this->cols*i + this->cols-1] = true;
+    loaded_map[this->cols*i+0] = true;
+    loaded_map[this->cols*i + this->cols-1] = true;
   }
   for(int i=0; i<this->cols; i++){
-    my_map[this->cols*0 + i] = true;
-    my_map[this->cols*(this->rows-1) + i] = true;
+    loaded_map[this->cols*0 + i] = true;
+    loaded_map[this->cols*(this->rows-1) + i] = true;
   }
-  for(int i=0; i<obstacles.size(); i++){
-    int x = obstacles[i].first+1;
-    int y = obstacles[i].second+1;
-     my_map[x*this->cols + y] = true;
+  for (const auto& obstacle : obstacles) {
+    const int x = obstacle.first + 1;
+    const int y = obstacle.second + 1;
+    loaded_map[x*this->cols + y] = true;
   }
 
-    this->my_map = my_map;
-    // initialize actions_offset array
+    this->my_map = loaded_map;
+    // Initialize action offsets once the padded dimensions are known.
     actions_offset = new int[5];
     actions_offset[0] = 0; actions_offset[1] = -this->cols; actions_offset[2] = 1; actions_offset[3] = this->cols; actions_offset[4] = -1;
 

@@ -8,8 +8,6 @@
 #include <cmath>
 #include <limits>
 
-using namespace boost;
-using namespace std;
 namespace lazycbs{
 Node::Node() : id(0), g_val(0), h_val(0), parent(NULL), timestep(0), num_internal_conf(0), in_openlist(false),
 	       g_hwy_val(0), h_hwy_val(0) {
@@ -39,17 +37,15 @@ Node::~Node() {
 
 std::ostream& operator<<(std::ostream& os, const Node& n) {
   if ( n.parent != NULL )
-    os << "ID=" << n.id << " ; TIMESTEP=" << n.timestep << " ; GVAL=" << n.g_val << " ; HVAL=" << std::setprecision(4) << n.h_val
+    os << "ID=" << n.id << " ; TIMESTEP=" << n.timestep << " ; GVAL=" << n.g_val
+       << " ; HVAL=" << std::setprecision(4) << n.h_val
        << " ; #CONF="<< n.num_internal_conf << " ; PARENT=" << (n.parent)->id
        << " ; IN_OPEN?" << std::boolalpha << n.in_openlist;
   else
-    os << "ID=" << n.id << " ; TIMESTEP=" << n.timestep << " ; GVAL=" << n.g_val << " ; HVAL=" << std::setprecision(4) << n.h_val
+    os << "ID=" << n.id << " ; TIMESTEP=" << n.timestep << " ; GVAL=" << n.g_val
+       << " ; HVAL=" << std::setprecision(4) << n.h_val
        << " ; #CONF="<< n.num_internal_conf << " ; ROOT (NO PARENT)";
   return os;
 }
-/*std::ostream& operator<<(std::ostream& os, const Node* n) {
-  os << "ID=" << n->id << " ; TIMESTEP=" << n->timestep << " ; GVAL=" << n->g_val << " ; PARENT=" << (n->parent)->id;
-  return os;
-  }*/
 }
 #endif

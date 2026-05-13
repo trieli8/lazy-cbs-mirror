@@ -2,17 +2,12 @@
 #ifndef AGENTSLOADER_LAZYCBS_CPP
 #define AGENTSLOADER_LAZYCBS_CPP
 #include <lazycbs/agents_loader.h>
-#include <string>
-#include <cstring>
 #include <iostream>
-#include <cassert>
 #include <fstream>
 #include <boost/tokenizer.hpp>
 #include <stdlib.h>
 #include <stdio.h>
-#include <vector>
 #include <utility>
-#include <algorithm>  // for remove_if
 
 using namespace boost;
 using namespace std;
@@ -30,23 +25,22 @@ AgentsLoader::AgentsLoader(string fname){
     char_separator<char> sep(",");
     tokenizer< char_separator<char> > tok(line, sep);
     tokenizer< char_separator<char> >::iterator beg=tok.begin();
-    this->num_of_agents = atoi ( (*beg).c_str() );
-    //    cout << "#AG=" << num_of_agents << endl;
-    for (int i=0; i<num_of_agents; i++) {
+    this->num_of_agents = atoi((*beg).c_str());
+    this->initial_locations.reserve(this->num_of_agents);
+    this->goal_locations.reserve(this->num_of_agents);
+    for (int i = 0; i < num_of_agents; i++) {
       getline (myfile, line);
       tokenizer< char_separator<char> > col_tok(line, sep);
       tokenizer< char_separator<char> >::iterator c_beg=col_tok.begin();
       pair<int,int> curr_pair;
-      curr_pair.first = atoi ( (*c_beg).c_str() );
+      curr_pair.first = atoi((*c_beg).c_str());
       c_beg++;
-      curr_pair.second = atoi ( (*c_beg).c_str() );
-      //      cout << "AGENT" << i << ":   START[" << curr_pair.first << "," << curr_pair.second << "] ; ";
+      curr_pair.second = atoi((*c_beg).c_str());
       this->initial_locations.push_back(curr_pair);
       c_beg++;
-      curr_pair.first = atoi ( (*c_beg).c_str() );
+      curr_pair.first = atoi((*c_beg).c_str());
       c_beg++;
-      curr_pair.second = atoi ( (*c_beg).c_str() ); 
-      //      cout << "GOAL[" << curr_pair.first << "," << curr_pair.second << "]" << endl;
+      curr_pair.second = atoi((*c_beg).c_str());
       this->goal_locations.push_back(curr_pair);
     }
     myfile.close();
@@ -58,17 +52,19 @@ AgentsLoader::AgentsLoader(string fname){
 AgentsLoader::AgentsLoader(std::vector<std::pair<int, int> > starts, std::vector<std::pair<int, int> > goals){
   this->num_of_agents = starts.size();
   
-  for(int i=0; i<this->num_of_agents; i++){
-    this->initial_locations.push_back(std::make_pair(starts[i].first+1, starts[i].second+1));
-    this->goal_locations.push_back(std::make_pair(goals[i].first+1, goals[i].second+1));
+  this->initial_locations.reserve(this->num_of_agents);
+  this->goal_locations.reserve(this->num_of_agents);
+  for (int i = 0; i < this->num_of_agents; i++) {
+    this->initial_locations.push_back(std::make_pair(starts[i].first + 1, starts[i].second + 1));
+    this->goal_locations.push_back(std::make_pair(goals[i].first + 1, goals[i].second + 1));
   }
 }
 
 void AgentsLoader::printAgentsInitGoal () {
-  cout << "AGENTS:" << endl;;
-  for (int i=0; i<num_of_agents; i++) {
-    cout << "Agent" << i << " : I=(" << initial_locations[i].first << "," << initial_locations[i].second << ") ; G=(" <<
-      goal_locations[i].first << "," << goal_locations[i].second << ")" << endl;
+  cout << "AGENTS:" << endl;
+  for (int i = 0; i < num_of_agents; i++) {
+    cout << "Agent" << i << " : I=(" << initial_locations[i].first << "," << initial_locations[i].second << ") ; G=("
+         << goal_locations[i].first << "," << goal_locations[i].second << ")" << endl;
   }
   cout << endl;
 }

@@ -221,7 +221,6 @@ class MAPF_Solver {
   bool processCore(geas::vec<geas::patom_t>& core);
       
   geas::patom_t getBarrier(int ai, BarrierDir dir, int t0, int p0, int dur);
-  bool checkBarrierViolated(int ai, int t, int p, int delta, int dur) const;
   geas::patom_t getTargetBarrier(int ai, int t0, int p0, int dur);
 
   int monotoneSubchainStart(int dy, int dx, int ai, int t) const;

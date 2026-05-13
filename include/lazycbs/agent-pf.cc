@@ -7,15 +7,17 @@
 
 #ifdef MAPF_BETTER_EXPLANATIONS
 namespace lazycbs {
+// The explanation pass can accumulate several blockages at the same timestep.
+// This keeps one vertex blockage per time slice, but preserves all edge
+// blockages because those are already unique.
 void prune_blockages(vec<Agent_PF::blockage_info>& b) {
   Agent_PF::blockage_info* s(b.begin());
   Agent_PF::blockage_info* e(b.end());
   Agent_PF::blockage_info* c(b.begin());
 
   while(s != e) {
-    // Process all blockages at t in a chunk.
+    // Process all blockages at the same time in one chunk.
     int t = s->t;
-    // Find the end of this time range.
     Agent_PF::blockage_info* te(s);
     for(; te != e; ++te) {
       if(te->t != t)
@@ -27,8 +29,7 @@ void prune_blockages(vec<Agent_PF::blockage_info>& b) {
       ++c;
       s = te;
     } else {
-      // Edge conflict. In this case, keep everything. Shouldn't have
-      // any duplicates, because edge conflicts are unique.
+      // Edge conflicts are unique, so keep the whole time slice.
       for(; s != te; ++s, ++c)
         *c = *s;
     }
@@ -38,13 +39,14 @@ void prune_blockages(vec<Agent_PF::blockage_info>& b) {
 }
 
 #ifdef EXPLAIN_LATEST
+// Newer explanation strategy:
+// walk backward from the goal to identify the set of blockages that can still
+// matter for the current lower bound, then walk forward to emit the actual
+// explanation clauses.
 void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<int>& ex_csts) {
   for(unsigned int ii = 0; ii < obs_tl; ++ii) {
     int ci(obs_stack[ii]);
     const obstacle_info& o(obstacles[ci]);
-
-     // Then apply the new obstacle.
-    // int tMax = (o.tag == O_BARRIER) ? o.timestep + o.b.duration : o.timestep+1;
 
     if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
       int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
@@ -192,7 +194,6 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
       // Cut off any locations which are too far.
       if(t + engine.my_heuristic[l] >= lb)
         continue;
-      // TODO: For barriers, check if the barrier is already active.
       // Check if anything is forbidden here at time t.
       vec<blockage_info>& bs(forbidden_times[l]);
       int b_idx(block_idx[l]);
@@ -234,14 +235,13 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
   has_forbidden.clear();
 }
 #else
-// Get the earliest explanation
+// Default explanation strategy:
+// keep the earliest relevant blockage at each location/time pair, then derive
+// the explanation clauses from that minimal set.
 void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<int>& ex_csts) {
   for(unsigned int ii = 0; ii < obs_tl; ++ii) {
     int ci(obs_stack[ii]);
     const obstacle_info& o(obstacles[ci]);
-
-     // Then apply the new obstacle.
-    // int tMax = (o.tag == O_BARRIER) ? o.timestep + o.b.duration : o.timestep+1;
 
     if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
       int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
@@ -389,7 +389,6 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
       // Cut off any locations which are too far.
       if(t < start_dist[l])
         continue;
-      // TODO: For barriers, check if the barrier is already active.
       // Check if anything is forbidden here at time t.
       vec<blockage_info>& bs(forbidden_times[l]);
       int b_idx(block_idx[l]);
@@ -433,51 +432,10 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
 #endif
 
 bool Agent_PF::check_sat(ctx_t& ctx) {
+  (void)ctx;
+  // This build relies on the GEAS-backed low-level solver, so the alternate
+  // propagation-only satisfiability check stays disabled.
   return true;
-#if 0
-  ::std::vector< ::std::vector<::std::pair<int, int> > > local_obstacles;
-  SingleAgentECBS::persistent_constraints_t target_blocks(active_obstacles.size(), INT_MAX);
-  // Walk through all the obstacles, and activate any that are present.
-  int cap(cost.ub(ctx));
-  for(int ii = 0; ii <= cap; ++ii)
-    local_obstacles.push_back(::std::list<::std::pair<int, int> >());
-
-  for(const obstacle_info& o : obstacles) {
-    int t(o.timestep);
-    if(o.at.lb(ctx)) {
-      // Activated 
-    if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
-      int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
-      if(o.timestep < target_blocks[pos])
-        target_blocks[pos] = o.timestep;
-    } else if(o.tag == O_BARRIER) {
-        const barrier_info& b(o.b);
-        int p = b.pos;
-        int end = ::std::min(cap + 1, t + b.duration);
-        for(; t < end; ++t) {
-          local_obstacles[t].push_back(::std::make_pair(p, -1));
-          p += b.delta;
-        }
-      } else {
-        // Mutex. First check if we're blocking the goal.
-        if(o.p.first == goal_pos && o.p.second == -1 && cap <= t)
-          return false;
-
-        // Otherwise, skip anything later than cap.
-        if(cap <= t)
-          continue;
-        local_obstacles[t].push_back(o.p);
-        if(o.p.second >= 0)
-          local_obstacles[t].push_back(::std::make_pair(o.p.second, o.p.first));
-      }
-    }
-  }
-  if(!engine.findPath(1.0, &local_obstacles, &target_blocks, nullptr, 0))
-    return false;
-
-  int p_cost = ::std::ceil(engine.path_cost);
-  return p_cost <= cap;
-#endif
 }
 
 #endif

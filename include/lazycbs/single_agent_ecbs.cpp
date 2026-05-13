@@ -24,22 +24,13 @@ geas::Heap<SingleAgentECBS::compare_ecbs_focal> SingleAgentECBS::heap(SingleAgen
 #endif
 
 using google::dense_hash_map;      // namespace where class lives by default
-using std::cout;
-using std::endl;
-using boost::heap::fibonacci_heap;
 
 
 SingleAgentECBS::SingleAgentECBS(int start_location, int goal_location, const double* my_heuristic,
                                      const bool* my_map, int map_size, const int* actions_offset,
                                      const EgraphReader* egr, double e_weight, bool tweak_g_val, int rrr_it, const bool rand_succ_gen) :
   my_heuristic(my_heuristic), my_map(my_map), actions_offset(actions_offset), egr(egr), rrr_it(rrr_it), rand_succ_gen(rand_succ_gen)
-#ifdef CHEAP_SEARCH
-   /* , seen((unsigned char*) malloc(sizeof(unsigned char) * map_size)), seen_sz(1) */
-//#ifdef PROPER_ECBS
-   // , heap(compare_ecbs_focal { map_size, seen, my_heuristic })
-// #endif
-#endif
-    {
+{
   this->start_location = start_location;
   this->goal_location = goal_location;
   this->map_size = map_size;
@@ -74,14 +65,11 @@ SingleAgentECBS::SingleAgentECBS(int start_location, int goal_location, const do
 void SingleAgentECBS::updatePath(Node* goal) {
   path.clear();
   Node* curr = goal;
-  // cout << "   UPDATING Path for one agent to: ";
   while (curr->timestep != 0) {
     path.push_back(curr->id);
-    // cout << curr->id << ",";
     curr = curr->parent;
   }
   path.push_back(start_location);
-  // cout << start_location << endl;
   reverse(path.begin(), path.end());
   path_cost = goal->g_val;  // $$$ -- should it be the path length or the adjusted cost (in case tweak_g_val is true)?
 }
@@ -100,9 +88,8 @@ inline bool SingleAgentECBS::hasFreshGoalPredecessor(int loc, int prev_t, const 
 }
 
 inline void SingleAgentECBS::releaseClosedListNodes(hashtable_t* allNodes_table) {
-  hashtable_t::iterator it;
-  for (it=allNodes_table->begin(); it != allNodes_table->end(); it++) {
-    delete ( (*it).second );  // Node* s = (*it).first; delete (s);
+  for (auto it = allNodes_table->begin(); it != allNodes_table->end(); ++it) {
+    delete (*it).second;
   }
 }
 
@@ -111,27 +98,12 @@ inline void SingleAgentECBS::releaseClosedListNodes(hashtable_t* allNodes_table)
 // timestep which has a constraint involving the goal location
 int SingleAgentECBS::extractLastGoalTimestep(int goal_location, const constraints_t* cons) {
   if (cons != NULL) {
-#if 0
-    for ( int t = static_cast<int>(cons->size())-1; t > 0; t-- ) {
-      for (list< pair<int, int> >::const_iterator it = cons->at(t).begin(); it != cons->at(t).end(); ++it) {
-        // $$$: in the following if, do we need to check second (maybe cannot happen in edge constraints?)
-        /*
-        if ((*it).first == goal_location || (*it).second == goal_location) {
-          return (t);
-        }
-        */
-        if((*it).first == goal_location && (*it).second == -1)
-          return t;
-      }
-    }
-#else
     int lastT = -1; 
     for(auto p : (*cons)[goal_location]) {
       if(p.second == -1)
         lastT = std::max(lastT, p.first);
     }
     return lastT;
-#endif
   }
   return -1;
 }
@@ -140,7 +112,6 @@ int SingleAgentECBS::extractLastGoalTimestep(int goal_location, const constraint
 // input: curr_id (location at time next_timestep-1) ; next_id (location at time next_timestep); next_timestep
 //        cons[timestep] is a list of <loc1,loc2> of (vertex/edge) constraints for that timestep.
 inline bool SingleAgentECBS::isConstrained(int curr_id, int next_id, int next_timestep, const constraints_t* cons, const persistent_constraints_t* persistent_constraints) const {
-  //  cout << "check if ID="<<id<<" is occupied at TIMESTEP="<<timestep<<endl;
   if(persistent_constraints != NULL && next_id < static_cast<int>(persistent_constraints->size())) {
     int blocked_from = persistent_constraints->at(next_id);
     if(blocked_from != INT_MAX && next_timestep >= blocked_from)
@@ -150,27 +121,6 @@ inline bool SingleAgentECBS::isConstrained(int curr_id, int next_id, int next_ti
   if (cons == NULL)
     return false;
 
-  // check vertex constraints (being in next_id at next_timestep is disallowed)
-  /*
-  if ( next_timestep < static_cast<int>(cons->size()) ) {
-    for ( list< pair<int, int> >::const_iterator it = cons->at(next_timestep).begin(); it != cons->at(next_timestep).end(); ++it ) {
-      if ( (*it).second == -1 ) {
-        if ( (*it).first == next_id ) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // check edge constraints (the move from curr_id to next_id at next_timestep-1 is disallowed)
-  if ( next_timestep > 0 && next_timestep - 1 < static_cast<int>(cons->size()) ) {
-    for ( list< pair<int, int> >::const_iterator it = cons->at(next_timestep-1).begin(); it != cons->at(next_timestep-1).end(); ++it ) {
-      if ( (*it).first == curr_id && (*it).second == next_id ) {
-        return true;
-      }
-    }
-  }
-  */
   for(auto c : (*cons)[next_id]) {
     if(c.first != next_timestep)
       continue;
@@ -206,12 +156,9 @@ int SingleAgentECBS::numOfConflictsForStep(int curr_id, int next_id, int next_ti
 
 // $$$ -- is there a more efficient way to do that?
 void SingleAgentECBS::updateFocalList(double old_lower_bound, double new_lower_bound, double f_weight) {
-  //  cout << "Update Focal: (old_LB=" << old_lower_bound << " ; new_LB=" << new_lower_bound << endl;;
   for (Node* n : open_list) {
-    //    cout << "   Considering " << n << " , " << *n << endl;
     if ( n->getFVal() > old_lower_bound &&
          n->getFVal() <= new_lower_bound ) {
-      //      cout << "      Added (n->f-val=" << n->getFVal() << ")" << endl;
       n->focal_handle = focal_list.push(n);
     }
   }
@@ -240,35 +187,12 @@ struct compare_pos {
   int max_plan_len;
 };
 
-//typedef boost::heap::fibonacci_heap<unsigned int, boost::heap::compare<compare_pos> > pos_heap_t;
 typedef std::priority_queue<unsigned int, std::vector<unsigned int>, compare_pos> pos_heap_t;
 
 
 static const unsigned char CONFL_CAP((1u<<7));
-
 #ifdef PROPER_ECBS
 #include <geas/mtl/Heap.h>
-
-
-/*
-struct compare_ecbs_focal {
-  // All nodes are within the focal distance, so break ties first on 
-  // number of conflicts, then depth.
-  inline int time(int x) const { return x / map_sz; }
-
-  bool operator()(unsigned int x, unsigned int y) const {
-    if(seen[x] != seen[y])
-      return seen[x] < seen[y];
-
-    // Prefer shorter plans.
-    return time(x) < time(y);
-  }
- 
-  int map_sz;
-  unsigned char*& seen;
-};
-typedef Heap<compare_ecbs_focal> focal_heap_t;
-*/
 #endif
 
 #endif
@@ -303,12 +227,8 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
   int lastGoalConsTime = extractLastGoalTimestep(goal_location, constraints);
 
   while ( !focal_list.empty() ) {
-    //    cout << "|F|=" << focal_list.size() << " ; |O|=" << open_list.size() << endl;
     Node* curr = focal_list.top(); focal_list.pop();
-    //    cout << "Current FOCAL bound is " << lower_bound << endl;
-    //    cout << "POPPED FOCAL's HEAD: (" << curr << ") " << (*curr) << endl;
     open_list.erase(curr->open_handle);
-    //    cout << "DELETED" << endl; fflush(stdout);
     curr->in_openlist = false;
     num_expanded++;
 
@@ -328,29 +248,16 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
       int next_id = curr->id + actions_offset[direction];
       int next_timestep = curr->timestep + 1;
       if ( !my_map[next_id] && !isConstrained(curr->id, next_id, next_timestep, constraints, persistent_constraints) ) {  // if that grid is not blocked
-        // compute cost to next_id via curr node
         double cost = 1;
-        /*
-        if (tweak_g_val == true)
-          if ( !(this->egr)->isEdge(curr->id, next_id) ) {
-            cost = cost * e_weight;
-            // cout << next_id << "->" << curr->id << "  inflated with cost=" << cost << endl;
-          }
-        */
-	// ---------------------------------------------------------------------------------------
         double next_g_val = curr->g_val + cost;
         double next_h_val = my_heuristic[next_id];
         int next_internal_conflicts = 0;
         if (max_plan_len > 0)  // check if the reservation table is not empty (that is tha max_length of any other agent's plan is > 0)
           next_internal_conflicts = curr->num_internal_conf + numOfConflictsForStep(curr->id, next_id, next_timestep, res_table, max_plan_len);
-        // generate (maybe temporary) node
         Node* next = new Node (next_id, next_g_val, next_h_val, curr, next_timestep, next_internal_conflicts, false);
-        //        cout << "   NEXT(" << next << ")=" << *next << endl;
-        // try to retrieve it from the hash table
         it = allNodes_table.find(next);
         
         if ( it == allNodes_table.end() ) {  // add the newly generated node to open_list and hash table
-          //          cout << "   ADDING it as new." << endl;
           next->open_handle = open_list.push(next);
           next->in_openlist = true;
           num_generated++;
@@ -360,13 +267,9 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
         } else {  // update existing node's if needed (only in the open_list)
           delete(next);  // not needed anymore -- we already generated it before
           Node* existing_next = (*it).second;
-          //          cout << "Actually next exists. It's address is " << existing_next << endl;
           if (existing_next->in_openlist == true) {  // if its in the open list
             if ( existing_next->getFVal() > next_g_val + next_h_val ||
                  (existing_next->getFVal() == next_g_val + next_h_val && existing_next->num_internal_conf > next_internal_conflicts) ) {
-              // if f-val decreased through this new path (or it remains the same and there's less internal conflicts)
-              //              cout << "   UPDATE its f-val in OPEN (decreased or less #conflicts)" << endl;
-              //              cout << "   Node state before update: " << *existing_next;
               bool add_to_focal = false;  // check if it was above the focal bound before and now below (thus need to be inserted)
               bool update_in_focal = false;  // check if it was inside the focal and needs to be updated (because f-val changed)
               bool update_open = false;
@@ -383,40 +286,29 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
               existing_next->h_val = next_h_val;
               existing_next->parent = curr;
               existing_next->num_internal_conf = next_internal_conflicts;
-              //              cout << "   Node state after update: " << *existing_next;
               if ( update_open ) {
                 open_list.increase(existing_next->open_handle);  // increase because f-val improved
-                //                cout << "     Increased in OPEN" << endl;
               }
               if (add_to_focal) {
                 existing_next->focal_handle = focal_list.push(existing_next);
-                //                cout << "     Inserted to FOCAL" << endl;
               }
               if (update_in_focal) {
                 focal_list.update(existing_next->focal_handle);  // should we do update? yes, because number of conflicts may go up or down
-                //                cout << "     Updated in FOCAL" << endl;
               }
             }
-            //            cout << "   Do NOT update in OPEN (f-val for this node increased or stayed the same and has more conflicts)" << endl;
           } else {  // if its in the closed list (reopen)
             if ( existing_next->getFVal() > next_g_val + next_h_val ||
                  (existing_next->getFVal() == next_g_val + next_h_val && existing_next->num_internal_conf > next_internal_conflicts) ) {
-              // if f-val decreased through this new path (or it remains the same and there's less internal conflicts)
-              //              cout << "   Reinsert it to OPEN" << endl;
-              //              cout << "   Node state before update: " << *existing_next;
               existing_next->g_val = next_g_val;
               existing_next->h_val = next_h_val;
               existing_next->parent = curr;
               existing_next->num_internal_conf = next_internal_conflicts;
               existing_next->open_handle = open_list.push(existing_next);
               existing_next->in_openlist = true;
-              //              cout << "   Node state after update: " << *existing_next;
               if ( existing_next->getFVal() <= lower_bound ) {
                 existing_next->focal_handle = focal_list.push(existing_next);
-                //                cout << "     Inserted to FOCAL" << endl;
               }
             }
-            //            cout << "   Do NOT reopen" << endl;
           }  // end update a node in closed list
         }  // end update an existing node
       }  // end if case for grid not blocked
@@ -428,27 +320,9 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
     if ( open_head->getFVal() > min_f_val ) {
       double new_min_f_val = open_head->getFVal();
       double new_lower_bound = f_weight * new_min_f_val;
-      /*
-        cout << "LL FOCAL UPDATE! Old-f-min=" << min_f_val << " ; Old-LB=" << lower_bound << endl;
-        cout << "OPEN: ";
-        for (Node* n : open_list)
-        cout << n << " , ";
-        cout << endl;
-        cout << "FOCAL: ";
-        for (Node* n : focal_list)
-        cout << n << " , ";
-        cout << endl;
-      */
       updateFocalList(lower_bound, new_lower_bound, f_weight);
       min_f_val = new_min_f_val;
       lower_bound = new_lower_bound;
-      /*
-        cout << "   New-f-min=" << min_f_val << " ; New-LB=" << lower_bound << endl;
-        cout << "FOCAL: ";
-        for (Node* n : focal_list)
-        cout << n << " , ";
-        cout << endl;
-      */
     }
   }  // end while loop
   // no path found
@@ -456,11 +330,6 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
   releaseClosedListNodes(&allNodes_table);
 #else
 #ifdef PROPER_ECBS
-  /*
-  compare_ecbs_focal cmp_focal { map_size, seen };
-  focal_heap_t heap(cmp_focal);
-  */
-
   unsigned int f_min = my_heuristic[start_location];
   unsigned int focal_cap = f_weight * f_min;
   unsigned int pending = 0;
@@ -489,7 +358,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
       if(loc == goal_location && t > lastGoalConsTime) {
         int prev_t = t - 1;
         if(hasFreshGoalPredecessor(loc, prev_t, constraints, persistent_constraints)) {
-          // Solution. Repair the path
+          // Reconstruct the path by following the best predecessor at each timestep.
           path.clear(); 
           while(t > 0) {
             path.push_back(loc);
@@ -522,7 +391,6 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
             if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
               min_f_val = (p / map_size) + my_heuristic[p % map_size];
           }
-          // lower_bound = f_weight * min_f_val;
           open_buckets[0].clear();
           open_buckets[1].clear();
           heap.clear();
@@ -544,20 +412,13 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
         }
         unsigned int next_p = next_t * map_size + next_loc;
         if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
-          // if that grid is not blocked
           unsigned int seen_next = seen[p];
-#if 0
-          if(next_t < max_plan_len && !(seen_next & CONFL_CAP))
-            seen_next += res_table[next_p];
-#else
           if(next_t < max_plan_len && !(seen_next & CONFL_CAP))
             seen_next += numOfConflictsForStep(loc, next_loc, next_t, res_table, max_plan_len);
-#endif
           unsigned int next_f(next_t + my_heuristic[next_loc]);
           if(!seen[next_p]) {
             seen[next_p] = seen_next;
 
-            // Check the f-value of this.
             if(next_f <= focal_cap) {
               heap.insert(next_p);
             } else {
@@ -584,10 +445,8 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
       heap.insert(l);
     open_buckets[0].clear();
     if(f_min == focal_cap) {
-      // Only clear out the first level.
       std::swap(open_buckets[0], open_buckets[1]);
     } else {
-      // Otherwise, everything open gets pushed. 
       for(unsigned int l : open_buckets[1])
         heap.insert(l);
       open_buckets[1].clear();    
@@ -617,7 +476,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
     if(loc == goal_location && t > lastGoalConsTime) {
       int prev_t = t - 1;
       if(hasFreshGoalPredecessor(loc, prev_t, constraints, persistent_constraints)) {
-        // Solution. Repair the path
+        // Reconstruct the path by following the best predecessor at each timestep.
         path.clear(); 
         while(t > 0) {
           path.push_back(loc);
