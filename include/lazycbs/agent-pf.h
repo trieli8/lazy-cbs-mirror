@@ -2,6 +2,7 @@
 #define GEAS_AGENT__PF_H
 #include <utility>
 #include <functional>
+#include <climits>
 #include <lazycbs/single_agent_ecbs.h>
 
 #include <geas/engine/propagator.h>
@@ -17,23 +18,37 @@ using namespace geas;
 
 class Agent_PF : public propagator, public prop_inst<Agent_PF> {
   // An obstacle, with the activating atom.
-  enum ObstacleType { O_MUTEX, O_BARRIER };
+  enum ObstacleType { O_MUTEX, O_BARRIER, O_GOAL_LOCK, O_TARGET_BARRIER };
   struct barrier_info {
     int pos; // Barrier position at the start time
     int delta; // Difference between successive barrier positions
     int duration; // How long does the barrier hold?
+  };
+  struct goal_lock_info {
+    int pos; // Locked location.
+    int duration; // How long the location stays locked.
+  };
+  struct target_barrier_info {
+    int pos; // Locked location.
+    int duration; // How long the location stays locked.
   };
   struct obstacle_info {
     obstacle_info(patom_t _at, int _timestep, ::std::pair<int, int> _p)
       : at(_at), timestep(_timestep), tag(O_MUTEX), p(_p) { }
     obstacle_info(patom_t _at, int _timestep, int loc, int delta, int duration)
       : at(_at), timestep(_timestep), tag(O_BARRIER), b({ loc, delta, duration}) { }
+    obstacle_info(patom_t _at, int _timestep, goal_lock_info _g)
+      : at(_at), timestep(_timestep), tag(O_GOAL_LOCK), g(_g) { }
+    obstacle_info(patom_t _at, int _timestep, target_barrier_info _tb)
+      : at(_at), timestep(_timestep), tag(O_TARGET_BARRIER), tb(_tb) { }
     patom_t at;
     int timestep;
     ObstacleType tag;
     
     union { 
       barrier_info b;
+      goal_lock_info g;
+      target_barrier_info tb;
       ::std::pair<int, int> p;
     };
   };
@@ -80,6 +95,21 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     }
   }
 
+  SingleAgentECBS::persistent_constraints_t build_target_blocks(void) const {
+    SingleAgentECBS::persistent_constraints_t target_blocks(active_obstacles.size(), INT_MAX);
+    for(int si = 0; si < obs_stack.size(); ++si) {
+      const obstacle_info& o(obstacles[obs_stack[si]]);
+      if(o.tag == O_GOAL_LOCK) {
+        if(o.g.pos < target_blocks.size() && o.timestep < target_blocks[o.g.pos])
+          target_blocks[o.g.pos] = o.timestep;
+      } else if(o.tag == O_TARGET_BARRIER) {
+        if(o.tb.pos < target_blocks.size() && o.timestep < target_blocks[o.tb.pos])
+          target_blocks[o.tb.pos] = o.timestep;
+      }
+    }
+    return target_blocks;
+  }
+
   // Restore the active constraints to the state we _should_ be in now,
   // looking at obs_tl.
   void revert_barrier(int t, const barrier_info& b) {
@@ -97,6 +127,16 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
 #endif
   }
 
+  void revert_goal_lock(int t, const goal_lock_info& g) {
+    (void)t;
+    (void)g;
+  }
+
+  void revert_target_barrier(int t, const target_barrier_info& tb) {
+    (void)t;
+    (void)tb;
+  }
+
   void restore_stack(void) {
     // Iteration order doesn't matter, because the multiset of pops
     // is the same.
@@ -104,6 +144,10 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       const obstacle_info& o(obstacles[obs_stack[si]]);
       if(o.tag == O_BARRIER) {
         revert_barrier(o.timestep, o.b);
+      } else if(o.tag == O_GOAL_LOCK) {
+        revert_goal_lock(o.timestep, o.g);
+      } else if(o.tag == O_TARGET_BARRIER) {
+        revert_target_barrier(o.timestep, o.tb);
       } else {
 #if 0
         active_obstacles[o.timestep].pop_back();
@@ -148,6 +192,10 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
     set(obs_tl, obs_stack.size());
     if(o.tag == O_BARRIER) {
       apply_barrier(o.timestep, o.b);
+    } else if(o.tag == O_GOAL_LOCK) {
+      // Goal locks are tracked separately as persistent target blocks.
+    } else if(o.tag == O_TARGET_BARRIER) {
+      // Target barriers are tracked separately as persistent target blocks.
     } else {
 #if 0
       active_obstacles[o.timestep].push_back(o.p);
@@ -175,6 +223,22 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
           return true;
         p += o.b.delta;
       }
+      return false;
+    } else if(o.tag == O_GOAL_LOCK) {
+      for(int t = o.timestep; t < path.size(); ++t) {
+        if(path[t] == o.g.pos)
+          return true;
+      }
+      if(path.last() == o.g.pos && (int) path.size() - 1 < o.timestep)
+        return true;
+      return false;
+    } else if(o.tag == O_TARGET_BARRIER) {
+      for(int t = o.timestep; t < path.size(); ++t) {
+        if(path[t] == o.tb.pos)
+          return true;
+      }
+      if(path.last() == o.tb.pos && (int) path.size() - 1 < o.timestep)
+        return true;
       return false;
     } else {
       if(o.p.second == -1) {
@@ -231,7 +295,8 @@ public:
     cost.attach(E_UB, watch<&P::wake_cost>(0, Wt_IDEM));
     auto res(get_reservations());
     num_executions++;
-    if(!engine.findPath(1.0, &active_obstacles, res.second, res.first))
+    auto target_blocks(build_target_blocks());
+    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first))
       throw RootFail();
     num_generated += engine.num_generated;
     num_expanded += engine.num_expanded;
@@ -293,12 +358,27 @@ public:
     return ci;
   }
 
+  int register_goal_lock(patom_t at, int timestep, int loc, int duration) {
+    int ci(obstacles.size());
+    obstacles.push(obstacle_info(at, timestep, goal_lock_info { loc, duration }));
+    attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
+    return ci;
+  }
+
+  int register_target_barrier(patom_t at, int timestep, int loc, int duration) {
+    int ci(obstacles.size());
+    obstacles.push(obstacle_info(at, timestep, target_barrier_info { loc, duration }));
+    attach(s, at, watch<&P::wake_obstacle>(ci, Wt_IDEM));
+    return ci;
+  }
+
   bool propagate(vec<clause_elt>& confl) {
     has_bypass = 0;
     assert(obs_stack.size() == obs_tl);
     auto res(get_reservations());
+    auto target_blocks(build_target_blocks());
     num_executions++;
-    if(!engine.findPath(1.0, &active_obstacles, res.second, res.first)) {
+    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first)) {
       num_generated += engine.num_generated;
       num_expanded += engine.num_expanded;
 
@@ -321,9 +401,10 @@ public:
 
   bool find_bypass(void) {
     auto res(get_reservations());
+    auto target_blocks(build_target_blocks());
     num_executions++;
     // if(engine.findPath_upto(ub(cost), &active_obstacles, res.second, res.first)) {
-    if(engine.findPath_upto(ub(cost), &active_obstacles, res.second, res.first)) {
+    if(engine.findPath_upto(ub(cost), &active_obstacles, &target_blocks, res.second, res.first)) {
       // Make sure the bypass is reset after backtracking
       if(!has_bypass)
         s->persist.bt_flags.push(&has_bypass);
@@ -351,7 +432,7 @@ public:
   lazycbs::SingleAgentECBS engine;
   ::std::function<::std::pair<int, bool*>()> get_reservations;
 
-  // Set of obstacles, as the engine expects to find them
+  // Time-expanded obstacles only. Persistent target locks are passed separately.
   // ::std::vector< ::std::list<::std::pair<int, int> > > active_obstacles;
   ::std::vector< ::std::vector<::std::pair<int, int> > > active_obstacles;
 

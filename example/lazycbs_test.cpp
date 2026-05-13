@@ -54,21 +54,27 @@ int main(int argc, char* argv[]) {
 
   std::string inputFile;
   bool verbose = false;
+  bool super_verbose = false;
+  bool target_symmetry = true;
   desc.add_options()("help", "produce help message")(
       "input,i", po::value<std::string>(&inputFile)->required(),
       "input file (YAML)")(
-      "verbose,v", "enable MAPF solver logging");
+      "verbose,v", "enable MAPF solver logging")(
+      "super-verbose", "enable MAPF solver logging and print agent paths")(
+      "no-target-symmetry", "disable the target-symmetry split");
 
   try {
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
-    po::notify(vm);
-    verbose = vm.count("verbose") != 0u;
-
     if (vm.count("help") != 0u) {
       std::cout << desc << "\n";
       return 0;
     }
+
+    po::notify(vm);
+    verbose = vm.count("verbose") != 0u;
+    super_verbose = vm.count("super-verbose") != 0u;
+    target_symmetry = vm.count("no-target-symmetry") == 0u;
   } catch (po::error& e) {
     std::cerr << e.what() << std::endl << std::endl;
     std::cerr << desc << std::endl;
@@ -109,7 +115,7 @@ int main(int argc, char* argv[]) {
 
   // read the egraph (egraph file, experience_weight, weigthedastar_weight)
   lazycbs::EgraphReader egr;
-  lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8, verbose);
+  lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8, verbose, super_verbose, target_symmetry);
 
   //ofstream res_f;
   //res_f.open(results_fname, ios::app);  // append the results file
@@ -133,10 +139,13 @@ int main(int argc, char* argv[]) {
   //mapf_icts.search(mapf, starts, &solution1);//
   if (success) {
     std::cout << "Planning successful! " << std::endl;
-    if (verbose) {
+    if (verbose || super_verbose) {
       std::cerr << "MAPF stats: ";
       mapf1.printStats(stderr);
       std::cerr << std::endl;
+    }
+    if (super_verbose) {
+      std::cerr << "MAPF agent paths:" << std::endl;
       mapf1.printPaths(stderr);
     }
 

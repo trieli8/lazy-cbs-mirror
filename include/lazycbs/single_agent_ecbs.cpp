@@ -86,6 +86,19 @@ void SingleAgentECBS::updatePath(Node* goal) {
   path_cost = goal->g_val;  // $$$ -- should it be the path length or the adjusted cost (in case tweak_g_val is true)?
 }
 
+inline bool SingleAgentECBS::hasFreshGoalPredecessor(int loc, int prev_t, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints) const {
+  if(prev_t < 0)
+    return true;
+  for(auto direction : directions) {
+    int adj = loc + actions_offset[direction];
+    if(adj == goal_location)
+      continue;
+    if(seen[prev_t * map_size + adj] && !isConstrained(adj, loc, prev_t + 1, constraints, persistent_constraints))
+      return true;
+  }
+  return false;
+}
+
 inline void SingleAgentECBS::releaseClosedListNodes(hashtable_t* allNodes_table) {
   hashtable_t::iterator it;
   for (it=allNodes_table->begin(); it != allNodes_table->end(); it++) {
@@ -126,8 +139,14 @@ int SingleAgentECBS::extractLastGoalTimestep(int goal_location, const constraint
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // input: curr_id (location at time next_timestep-1) ; next_id (location at time next_timestep); next_timestep
 //        cons[timestep] is a list of <loc1,loc2> of (vertex/edge) constraints for that timestep.
-inline bool SingleAgentECBS::isConstrained(int curr_id, int next_id, int next_timestep, const constraints_t* cons) {
+inline bool SingleAgentECBS::isConstrained(int curr_id, int next_id, int next_timestep, const constraints_t* cons, const persistent_constraints_t* persistent_constraints) const {
   //  cout << "check if ID="<<id<<" is occupied at TIMESTEP="<<timestep<<endl;
+  if(persistent_constraints != NULL && next_id < static_cast<int>(persistent_constraints->size())) {
+    int blocked_from = persistent_constraints->at(next_id);
+    if(blocked_from != INT_MAX && next_timestep >= blocked_from)
+      return true;
+  }
+
   if (cons == NULL)
     return false;
 
@@ -255,7 +274,7 @@ typedef Heap<compare_ecbs_focal> focal_heap_t;
 #endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // return true if a path found (and updates vector<int> path) or false if no path exists
-bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints, bool* res_table, size_t max_plan_len) {
+bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len) {
   // clear data structures if they had been used before
   // (note -- nodes are deleted before findPath returns)
   open_list.clear();
@@ -263,6 +282,10 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
   allNodes_table.clear();
   num_expanded = 0;
   num_generated = 0;
+
+  if(persistent_constraints != NULL && goal_location < static_cast<int>(persistent_constraints->size()) && persistent_constraints->at(goal_location) != INT_MAX) {
+    return false;
+  }
 
 #ifndef CHEAP_SEARCH
   hashtable_t::iterator it;  // will be used for find()
@@ -291,16 +314,20 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
 
     // check if the popped node is a goal
     if (curr->id == goal_location && curr->timestep > lastGoalConsTime) {
-      updatePath(curr);
-      releaseClosedListNodes(&allNodes_table);
-      return true;
+      if(curr->timestep > 0 && curr->parent != NULL && curr->parent->id == goal_location) {
+        // Not a fresh arrival yet; keep searching.
+      } else {
+        updatePath(curr);
+        releaseClosedListNodes(&allNodes_table);
+        return true;
+      }
     }
 
     // If current node is not goal, generate successors
     for (auto direction : directions) {  // {North,East,South,West,NoOP}
       int next_id = curr->id + actions_offset[direction];
       int next_timestep = curr->timestep + 1;
-      if ( !my_map[next_id] && !isConstrained(curr->id, next_id, next_timestep, constraints) ) {  // if that grid is not blocked
+      if ( !my_map[next_id] && !isConstrained(curr->id, next_id, next_timestep, constraints, persistent_constraints) ) {  // if that grid is not blocked
         // compute cost to next_id via curr node
         double cost = 1;
         /*
@@ -460,41 +487,47 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
       unsigned int loc(p % map_size);
       
       if(loc == goal_location && t > lastGoalConsTime) {
-        // Solution. Repair the path
-        path.clear(); 
-        while(t > 0) {
-          path.push_back(loc);
-          --t;
-          unsigned int pred = UINT_MAX;
-          unsigned char pred_cost(CONFL_CAP+2);
-          for(auto direction : directions) {
-            int adj = loc + actions_offset[direction];
-            assert(seen[t * map_size + adj] <= CONFL_CAP+1);
-            if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
-              if(isConstrained(adj, loc, t+1, constraints))
+        int prev_t = t - 1;
+        if(hasFreshGoalPredecessor(loc, prev_t, constraints, persistent_constraints)) {
+          // Solution. Repair the path
+          path.clear(); 
+          while(t > 0) {
+            path.push_back(loc);
+            --t;
+            prev_t = t - 1;
+            unsigned int pred = UINT_MAX;
+            unsigned char pred_cost(CONFL_CAP+2);
+            for(auto direction : directions) {
+              int adj = loc + actions_offset[direction];
+              assert(seen[t * map_size + adj] <= CONFL_CAP+1);
+              if(adj == goal_location)
                 continue;
-              pred = adj;
-              pred_cost = seen[t * map_size + adj];
+              if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
+                if(isConstrained(adj, loc, t+1, constraints, persistent_constraints))
+                  continue;
+                pred = adj;
+                pred_cost = seen[t * map_size + adj];
+              }
             }
+            assert(pred != UINT_MAX); // No parent found
+            loc = pred;
           }
-          assert(pred != UINT_MAX); // No parent found
-          loc = pred;
-        }
-        path.push_back(start_location);
-        reverse(path.begin(), path.end());
-        path_cost = path.size()-1;
+          path.push_back(start_location);
+          reverse(path.begin(), path.end());
+          path_cost = path.size()-1;
 
-        min_f_val = path_cost;
-        for(int ii = 0; ii < heap.size(); ++ii) {
-          unsigned int p(heap[ii]);
-          if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
-            min_f_val = (p / map_size) + my_heuristic[p % map_size];
+          min_f_val = path_cost;
+          for(int ii = 0; ii < heap.size(); ++ii) {
+            unsigned int p(heap[ii]);
+            if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
+              min_f_val = (p / map_size) + my_heuristic[p % map_size];
+          }
+          // lower_bound = f_weight * min_f_val;
+          open_buckets[0].clear();
+          open_buckets[1].clear();
+          heap.clear();
+          return true;
         }
-        // lower_bound = f_weight * min_f_val;
-        open_buckets[0].clear();
-        open_buckets[1].clear();
-        heap.clear();
-        return true;
       }
 
       int next_t = t + 1;
@@ -510,7 +543,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
           // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
         }
         unsigned int next_p = next_t * map_size + next_loc;
-        if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints)) {
+        if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
           // if that grid is not blocked
           unsigned int seen_next = seen[p];
 #if 0
@@ -582,32 +615,38 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
     unsigned int loc(p % map_size);
     
     if(loc == goal_location && t > lastGoalConsTime) {
-      // Solution. Repair the path
-      path.clear(); 
-      while(t > 0) {
-        path.push_back(loc);
-        --t;
-        unsigned int pred = UINT_MAX;
-        unsigned char pred_cost(CONFL_CAP+1);
-        for(auto direction : directions) {
-          int adj = loc + actions_offset[direction];
-          if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
-            if(isConstrained(adj, loc, t+1, constraints))
+      int prev_t = t - 1;
+      if(hasFreshGoalPredecessor(loc, prev_t, constraints, persistent_constraints)) {
+        // Solution. Repair the path
+        path.clear(); 
+        while(t > 0) {
+          path.push_back(loc);
+          --t;
+          prev_t = t - 1;
+          unsigned int pred = UINT_MAX;
+          unsigned char pred_cost(CONFL_CAP+1);
+          for(auto direction : directions) {
+            int adj = loc + actions_offset[direction];
+            if(adj == goal_location)
               continue;
-            pred = adj;
-            pred_cost = seen[t * map_size + adj];
+            if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
+              if(isConstrained(adj, loc, t+1, constraints, persistent_constraints))
+                continue;
+              pred = adj;
+              pred_cost = seen[t * map_size + adj];
+            }
           }
+          assert(pred != UINT_MAX); // No parent found
+          loc = pred;
         }
-        assert(pred != UINT_MAX); // No parent found
-        loc = pred;
-      }
-      path.push_back(start_location);
-      reverse(path.begin(), path.end());
-      path_cost = path.size()-1;
+        path.push_back(start_location);
+        reverse(path.begin(), path.end());
+        path_cost = path.size()-1;
 
-      lower_bound = path_cost;
-      min_f_val = path_cost;
-      return true;
+        lower_bound = path_cost;
+        min_f_val = path_cost;
+        return true;
+      }
     }
 
     // Increase the cost of this, if this is reserved.
@@ -628,7 +667,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
         // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
       }
       unsigned int next_p = next_t * map_size + next_loc;
-      if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints)) {
+      if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
         // if that grid is not blocked
         if(seen[next_p]) {
           seen[next_p] = std::min(seen_p, seen[next_p]); 
@@ -647,7 +686,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
 }
 
 
-bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constraints, bool* res_table, size_t max_plan_len) {
+bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len) {
 #ifndef CHEAP_SEARCH
   assert(0);
   return false;
@@ -655,6 +694,10 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
   // Re-use the mechanism for focal search.
   num_expanded = 0;
   num_generated = 0;
+
+  if(persistent_constraints != NULL && goal_location < static_cast<int>(persistent_constraints->size()) && persistent_constraints->at(goal_location) != INT_MAX) {
+    return false;
+  }
 
   unsigned int pending = 0;
      
@@ -679,39 +722,45 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
     unsigned int loc(p % map_size);
     
     if(loc == goal_location && t > lastGoalConsTime) {
-      // Solution. Repair the path
-      path.clear(); 
-      while(t > 0) {
-        path.push_back(loc);
-        --t;
-        unsigned int pred = UINT_MAX;
-        unsigned char pred_cost(CONFL_CAP+2);
-        for(auto direction : directions) {
-          int adj = loc + actions_offset[direction];
-          assert(seen[t * map_size + adj] <= CONFL_CAP+1);
-          if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
-            if(isConstrained(adj, loc, t+1, constraints))
+      int prev_t = t - 1;
+      if(hasFreshGoalPredecessor(loc, prev_t, constraints, persistent_constraints)) {
+        // Solution. Repair the path
+        path.clear(); 
+        while(t > 0) {
+          path.push_back(loc);
+          --t;
+          prev_t = t - 1;
+          unsigned int pred = UINT_MAX;
+          unsigned char pred_cost(CONFL_CAP+2);
+          for(auto direction : directions) {
+            int adj = loc + actions_offset[direction];
+            if(adj == goal_location)
               continue;
-            pred = adj;
-            pred_cost = seen[t * map_size + adj];
+            assert(seen[t * map_size + adj] <= CONFL_CAP+1);
+            if(seen[t * map_size + adj] && seen[t * map_size + adj] < pred_cost) {
+              if(isConstrained(adj, loc, t+1, constraints, persistent_constraints))
+                continue;
+              pred = adj;
+              pred_cost = seen[t * map_size + adj];
+            }
           }
+          assert(pred != UINT_MAX); // No parent found
+          loc = pred;
         }
-        assert(pred != UINT_MAX); // No parent found
-        loc = pred;
-      }
-      path.push_back(start_location);
-      reverse(path.begin(), path.end());
-      path_cost = path.size()-1;
+        path.push_back(start_location);
+        reverse(path.begin(), path.end());
+        path_cost = path.size()-1;
 
-      min_f_val = path_cost;
-      for(int ii = 0; ii < heap.size(); ++ii) {
-        unsigned int p(heap[ii]);
-        if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
-          min_f_val = (p / map_size) + my_heuristic[p % map_size];
+        min_f_val = path_cost;
+        for(int ii = 0; ii < heap.size(); ++ii) {
+          unsigned int p(heap[ii]);
+          if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
+            min_f_val = (p / map_size) + my_heuristic[p % map_size];
+        }
+        // lower_bound = f_weight * min_f_val;
+        heap.clear();
+        return true;
       }
-      // lower_bound = f_weight * min_f_val;
-      heap.clear();
-      return true;
     }
 
     int next_t = t + 1;
@@ -727,7 +776,7 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
         // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
       }
       unsigned int next_p = next_t * map_size + next_loc;
-      if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints)) {
+      if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
         // if that grid is not blocked
         unsigned int seen_next = seen[p];
         if(next_t < max_plan_len && !(seen_next & CONFL_CAP))

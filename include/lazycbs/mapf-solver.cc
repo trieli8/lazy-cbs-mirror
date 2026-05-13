@@ -23,12 +23,22 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
 }
 
 MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose)
+  : MAPF_Solver(_ml, _al, _egr, UB, _verbose, false) {
+}
+
+MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose, bool _super_verbose)
+  : MAPF_Solver(_ml, _al, _egr, UB, _verbose, _super_verbose, true) {
+}
+
+MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose, bool _super_verbose, bool _enable_target_symmetry)
   : ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols)
   , reservation_table(map_size, false), cmap(map_size, -1), nmap(map_size, -1)
   , agent_set(al->num_of_agents)
   , cost_ub(UB)
   , HL_conflicts(0)
-  , verbose(_verbose) {
+  , verbose(_verbose)
+  , super_verbose(_super_verbose)
+  , enable_target_symmetry(_enable_target_symmetry) {
 
     int num_of_agents = al->num_of_agents;
     // int map_size = ml->rows*ml->cols;
@@ -50,10 +60,11 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
 
     tracef("MAPF init: agents=%d map=%dx%d initial_cost_lb=%d cost_ub=%d",
       num_of_agents, ml->rows, ml->cols, cost_lb, cost_ub);
+    tracef("MAPF init: target symmetry %s", enable_target_symmetry ? "enabled" : "disabled");
 }
 
 void MAPF_Solver::tracef(const char* fmt, ...) const {
-  if(!verbose)
+  if(!(verbose || super_verbose))
     return;
 
   va_list ap;
@@ -129,6 +140,9 @@ void log_conflict(MAPF_Solver& mapf) {
         t, mapf.row_of(new_conflict.b.s_loc), mapf.col_of(new_conflict.b.s_loc),
            mapf.row_of(new_conflict.b.e_loc), mapf.col_of(new_conflict.b.e_loc),
            a1, a2);
+    } else if(new_conflict.type == MAPF_Solver::C_TARGET) {
+      fprintf(stderr, "%%%% Adding target conflict: [%d, agents=(%d,%d), loc=%d]\n",
+        t, a1, a2, new_conflict.p.loc1);
     } else {
       fprintf(stderr, "%%%% Adding conflict: [%d, (%d, %d), %d, %d, %d | (%d, %d -> %d, %d) | (%d, %d -> %d, %d) ]\n", new_conflict.timestamp, new_conflict.p.loc1 / mapf.ml->cols, new_conflict.p.loc1 % mapf.ml->cols, new_conflict.p.loc2, new_conflict.a1, new_conflict.a2,
         mapf.pathfinders[new_conflict.a1]->start_pos / mapf.ml->cols, mapf.pathfinders[new_conflict.a1]->start_pos % mapf.ml->cols,
@@ -290,6 +304,13 @@ int MAPF_Solver::maxPathLength(void) const {
 inline int agentPosition(Agent_PF* p, int t) {
   const geas::vec<int>& P(p->getPath());
   return (t < P.size()) ? P[t] : P.last();
+}
+
+inline bool agentStaysAtGoal(Agent_PF* p, int t) {
+  const geas::vec<int>& P(p->getPath());
+  if(P.size() == 0)
+    return false;
+  return t >= static_cast<int>(P.size()) - 1 && agentPosition(p, t) == p->goal_pos;
 }
 
 inline void clear_map(MAPF_Solver* s, geas::vec<int>& map, int t) {
@@ -583,6 +604,16 @@ bool MAPF_Solver::checkForConflicts(void) {
       if(nmap[loc] >= 0) {
         // Already occupied.
         int aj(nmap[loc]);
+        if(agentStaysAtGoal(pathfinders[ai], t) || agentStaysAtGoal(pathfinders[aj], t)) {
+          if(!agentStaysAtGoal(pathfinders[ai], t))
+            ::std::swap(ai, aj);
+          new_conflicts.push(conflict::target(t, ai, aj, loc, -1));
+
+          clear_map(this, cmap, t-1);
+          clear_map(this, nmap, t);
+          agent_set.remove(ai);
+          continue;
+        }
         int dy1 = row_of(agentPosition(pathfinders[ai], t)) - row_of(agentPosition(pathfinders[ai], t-1));
         int dx1 = col_of(agentPosition(pathfinders[ai], t)) - col_of(agentPosition(pathfinders[ai], t-1));
         int dy2 = row_of(agentPosition(pathfinders[aj], t)) - row_of(agentPosition(pathfinders[aj], t-1));
@@ -777,6 +808,18 @@ geas::patom_t MAPF_Solver::getBarrier(int ai, BarrierDir dir, int t, int p, int 
   return act;
 }
 
+geas::patom_t MAPF_Solver::getTargetBarrier(int ai, int t, int p, int dur) {
+  assert(t >= 0);
+  if(dur <= 0)
+    return geas::at_False;
+  if(t == 0 && p == pathfinders[ai]->engine.start_location)
+    return geas::at_False;
+
+  geas::patom_t act(s.new_boolvar());
+  pathfinders[ai]->register_target_barrier(act, t, p, dur);
+  return act;
+}
+
 bool MAPF_Solver::addConflict(void) {
   HL_conflicts++;
   for(auto new_conflict : new_conflicts) {
@@ -887,6 +930,42 @@ bool MAPF_Solver::addConflict(void) {
         add_clause(s.data, s1, e1, s2, e2);
       }
         */
+    } else if(new_conflict.type == C_TARGET) {
+      int target_agent(new_conflict.a1);
+      int moving_agent(new_conflict.a2);
+      int target_loc(new_conflict.p.loc1);
+      tracef("addConflict: target t=%d target agent=%d moving agent=%d loc=%d",
+        new_conflict.timestamp, target_agent, moving_agent, target_loc);
+
+      target_key k { new_conflict.timestamp, target_agent, moving_agent, target_loc };
+      auto it(target_map.find(k));
+      int idx;
+      if(it != target_map.end()) {
+        idx = (*it).second;
+      } else {
+        idx = target_constraints.size();
+        target_map.insert(::std::make_pair(k, idx));
+        target_constraints.push(target_data { s.new_boolvar(), false });
+      }
+
+      target_data& c(target_constraints[idx]);
+      if(!c.attached) {
+        int dur = ::std::max(1, cost_ub - new_conflict.timestamp + 1);
+        geas::patom_t lock_at(getTargetBarrier(moving_agent, new_conflict.timestamp, target_loc, dur));
+        if(enable_target_symmetry) {
+          // Target symmetry split:
+          // 1) forbid the stationary agent from using the target at time t-1
+          // 2) forbid the moving agent from using the target cell from that time onward
+          geas::patom_t stationary_lock(
+            getTargetBarrier(target_agent, new_conflict.timestamp - 1, target_loc, dur));
+          add_clause(s.data, ~c.sel, stationary_lock);
+          add_clause(s.data, c.sel, lock_at);
+        } else {
+          // Fall back to a direct target lock on the moving agent only.
+          c.sel = lock_at;
+        }
+        c.attached = true;
+      }
     } else {
       int loc1 = new_conflict.p.loc1;
       int loc2 = new_conflict.p.loc2;
@@ -926,6 +1005,10 @@ bool MAPF_Solver::addConflict(void) {
       }
       // FIXME: Abstract properly
       //s.data->confl.pred_saved[c.sel.p>>1].val = geas::from_int((rand() % 2 ? a1 : a2));
+    }
+    if(super_verbose) {
+      fprintf(stderr, "MAPF paths after new conflict:\n");
+      printPaths(stderr);
     }
   }
   new_conflicts.clear();

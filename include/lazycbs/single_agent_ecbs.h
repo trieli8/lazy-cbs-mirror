@@ -4,6 +4,7 @@
 #define PROPER_ECBS
 
 #include <stdlib.h>
+#include <climits>
 
 #include <vector>
 #include <list>
@@ -118,6 +119,7 @@ class SingleAgentECBS {
   */
   // typedef vector< list< pair<int, int> > > constraints_t;
   typedef vector< vector< pair<int, int> > > constraints_t;
+  typedef vector<int> persistent_constraints_t;
   int extractLastGoalTimestep(int goal_location, const constraints_t* cons);
 
   inline void releaseClosedListNodes(hashtable_t* allNodes_table);
@@ -126,12 +128,16 @@ class SingleAgentECBS {
      Note -- constraint[timestep] is a list of pairs. Each pair is a disallowed <loc1,loc2> (loc2=-1 for vertex constraint).
      Returns true/false.
   */
-  inline bool isConstrained(int curr_id, int next_id, int next_timestep, const constraints_t* cons);
+  inline bool isConstrained(int curr_id, int next_id, int next_timestep, const constraints_t* cons, const persistent_constraints_t* persistent_constraints) const;
 
   /* Updates the path datamember (vector<int>).
      After update it will contain the sequence of locations found from the goal to the start.
   */
   void updatePath(Node* goal);  // $$$ make inline?
+
+  /* Returns true iff there is a valid predecessor at timestep t-1 that reaches the goal
+     for the first time at timestep t. Used to enforce the target-symmetry freshness rule. */
+  inline bool hasFreshGoalPredecessor(int loc, int prev_t, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints) const;
 
   /* Return the number of conflicts between the known_paths' (by looking at the reservation table) for the move [curr_id,next_id].
      Returns 0 if no conflict, 1 for vertex or edge conflict, 2 for both.
@@ -145,8 +151,8 @@ class SingleAgentECBS {
   /* Returns true if a collision free path found (with cost up to f_weight * f-min) while
      minimizing the number of internal conflicts (that is conflicts with known_paths for other agents found so far).
   */
-  bool findPath(double f_weight, const constraints_t* constraints, bool* res_table, size_t max_plan_len);
-  bool findPath_upto(double f_cap, const constraints_t* constraints, bool* res_table, size_t max_plan_len);
+  bool findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len);
+  bool findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len);
 
   ~SingleAgentECBS();
 };

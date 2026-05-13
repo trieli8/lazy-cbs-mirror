@@ -46,7 +46,18 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
      // Then apply the new obstacle.
     // int tMax = (o.tag == O_BARRIER) ? o.timestep + o.b.duration : o.timestep+1;
 
-    if(o.tag == O_BARRIER) {
+    if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
+      int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
+      int duration = (o.tag == O_GOAL_LOCK) ? o.g.duration : o.tb.duration;
+      int end = o.timestep + duration;
+      for(int t = o.timestep; t < end; ++t) {
+        if(!has_blocked.elem(pos))
+          has_blocked.add(pos);
+        blocked_times[pos].push(blockage_info { -1, t, ci });
+        if(pos == goal_pos)
+          lb = ::std::max(lb, (unsigned int) t+1);
+      }
+    } else if(o.tag == O_BARRIER) {
       const barrier_info& b(o.b);
       int t = o.timestep;
       int p = b.pos;
@@ -232,7 +243,18 @@ void Agent_PF::extract_lb_explanation(unsigned int obs_tl, unsigned int lb, vec<
      // Then apply the new obstacle.
     // int tMax = (o.tag == O_BARRIER) ? o.timestep + o.b.duration : o.timestep+1;
 
-    if(o.tag == O_BARRIER) {
+    if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
+      int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
+      int duration = (o.tag == O_GOAL_LOCK) ? o.g.duration : o.tb.duration;
+      int end = o.timestep + duration;
+      for(int t = o.timestep; t < end; ++t) {
+        if(!has_blocked.elem(pos))
+          has_blocked.add(pos);
+        blocked_times[pos].push(blockage_info { -1, t, ci });
+        if(pos == goal_pos)
+          lb = ::std::max(lb, (unsigned int) t+1);
+      }
+    } else if(o.tag == O_BARRIER) {
       const barrier_info& b(o.b);
       int t = o.timestep;
       int p = b.pos;
@@ -414,6 +436,7 @@ bool Agent_PF::check_sat(ctx_t& ctx) {
   return true;
 #if 0
   ::std::vector< ::std::vector<::std::pair<int, int> > > local_obstacles;
+  SingleAgentECBS::persistent_constraints_t target_blocks(active_obstacles.size(), INT_MAX);
   // Walk through all the obstacles, and activate any that are present.
   int cap(cost.ub(ctx));
   for(int ii = 0; ii <= cap; ++ii)
@@ -423,7 +446,11 @@ bool Agent_PF::check_sat(ctx_t& ctx) {
     int t(o.timestep);
     if(o.at.lb(ctx)) {
       // Activated 
-      if(o.tag == O_BARRIER) {
+    if(o.tag == O_GOAL_LOCK || o.tag == O_TARGET_BARRIER) {
+      int pos = (o.tag == O_GOAL_LOCK) ? o.g.pos : o.tb.pos;
+      if(o.timestep < target_blocks[pos])
+        target_blocks[pos] = o.timestep;
+    } else if(o.tag == O_BARRIER) {
         const barrier_info& b(o.b);
         int p = b.pos;
         int end = ::std::min(cap + 1, t + b.duration);
@@ -445,7 +472,7 @@ bool Agent_PF::check_sat(ctx_t& ctx) {
       }
     }
   }
-  if(!engine.findPath(1.0, &local_obstacles, nullptr, 0))
+  if(!engine.findPath(1.0, &local_obstacles, &target_blocks, nullptr, 0))
     return false;
 
   int p_cost = ::std::ceil(engine.path_cost);

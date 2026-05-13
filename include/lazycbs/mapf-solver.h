@@ -71,7 +71,30 @@ class MAPF_Solver {
     }
   };
 
-  enum ConflictType { C_MUTEX, C_BARRIER };
+  struct target_key {
+    int timestamp;
+    int target_agent;
+    int moving_agent;
+    int location;
+  };
+  struct target_key_hasher {
+    size_t operator()(const target_key& k) const {
+      size_t h(5331);
+      h = ((h<<5) + k.timestamp)^h;
+      h = ((h<<5) + k.target_agent)^h;
+      h = ((h<<5) + k.moving_agent)^h;
+      h = ((h<<5) + k.location)^h;
+      return h;
+    }
+  };
+  struct target_key_eq {
+    bool operator()(const target_key& x, const target_key& y) const {
+      return x.timestamp == y.timestamp && x.target_agent == y.target_agent &&
+        x.moving_agent == y.moving_agent && x.location == y.location;
+    }
+  };
+
+  enum ConflictType { C_MUTEX, C_BARRIER, C_TARGET };
   struct barrier_info {
     int s_loc; // Start corner
     int e_loc; // Exit corner
@@ -97,6 +120,17 @@ class MAPF_Solver {
       return c;
     }
 
+    static conflict target(int t, int a1, int a2, int loc1, int loc2) {
+      conflict c;
+      c.timestamp = t;
+      c.type = C_TARGET;
+      c.a1 = a1;
+      c.a2 = a2;
+      c.p.loc1 = loc1;
+      c.p.loc2 = loc2;
+      return c;
+    }
+
     int timestamp;
     ConflictType type;
 
@@ -116,9 +150,15 @@ class MAPF_Solver {
     intvar sel; // Selector variable
     btset::bitset attached; // Which agents are already attached?
   };
+  struct target_data {
+    patom_t sel; // Branch selector for the target-symmetry split.
+    bool attached;
+  };
 
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub);
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose);
+  MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose, bool super_verbose);
+  MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose, bool super_verbose, bool enable_target_symmetry);
 
   // Problem information
   const  MapLoader* ml;
@@ -142,6 +182,8 @@ class MAPF_Solver {
   geas::vec< geas::vec<barrier_data> > barriers;
   ::std::unordered_map<cons_key, int, cons_key_hasher, cons_key_eq> cons_map;
   ::std::unordered_map<barrier_key, int, barrier_key_hasher, barrier_key_eq> barrier_map;
+  ::std::unordered_map<target_key, int, target_key_hasher, target_key_eq> target_map;
+  geas::vec<target_data> target_constraints;
   // conflict new_conflict;
   geas::vec<conflict> new_conflicts;
   p_sparseset agent_set;
@@ -152,6 +194,8 @@ class MAPF_Solver {
   int cost_lb;
   int cost_ub;
   bool verbose;
+  bool super_verbose;
+  bool enable_target_symmetry;
 
   // How many high-level conflicts have been processed?
   int HL_conflicts;
@@ -178,6 +222,7 @@ class MAPF_Solver {
       
   geas::patom_t getBarrier(int ai, BarrierDir dir, int t0, int p0, int dur);
   bool checkBarrierViolated(int ai, int t, int p, int delta, int dur) const;
+  geas::patom_t getTargetBarrier(int ai, int t0, int p0, int dur);
 
   int monotoneSubchainStart(int dy, int dx, int ai, int t) const;
   int monotoneSubchainEnd(int dy, int dx, int ai, int t) const;
