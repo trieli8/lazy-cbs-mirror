@@ -109,7 +109,7 @@ class SingleAgentECBS {
 
   static geas::Heap<compare_ecbs_focal> heap;
 #ifdef PROPER_ECBS
-  vector<unsigned int> open_buckets[2];
+  vector<vector<unsigned int> > open_buckets;
 #endif
 #endif
   /* ctor

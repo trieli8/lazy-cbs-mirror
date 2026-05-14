@@ -8,6 +8,7 @@
 #include <list>
 #include <utility>
 #include <queue>
+#include <cmath>
 
 #include <boost/heap/fibonacci_heap.hpp>
 #include <sparsehash/dense_hash_map>
@@ -55,7 +56,8 @@ SingleAgentECBS::SingleAgentECBS(int start_location, int goal_location, const do
   allNodes_table.set_deleted_key(deleted_node);
 #ifdef CHEAP_SEARCH
   // memset(seen, 0, map_size * seen_sz);
-  unsigned int LB = map_size * my_heuristic[start_location];
+  unsigned int initial_frames = static_cast<unsigned int>(std::ceil(my_heuristic[start_location])) + 1;
+  unsigned int LB = map_size * initial_frames;
   if(seen_sz < LB) {
     seen = (unsigned char*) realloc(seen, sizeof(unsigned char) * LB);
     seen_sz = LB;
@@ -400,8 +402,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
             if((p / map_size) + my_heuristic[p % map_size] < min_f_val)
               min_f_val = (p / map_size) + my_heuristic[p % map_size];
           }
-          open_buckets[0].clear();
-          open_buckets[1].clear();
+          open_buckets.clear();
           heap.clear();
           return true;
         }
@@ -416,6 +417,11 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
           seen = (unsigned char*) realloc(seen, next_sz);
           memset(seen + seen_sz, 0, next_sz - seen_sz);
           seen_sz = next_sz;
+          unsigned next_bias_sz = sizeof(unsigned int) * map_size * next_tmax;
+          size_t old_bias_sz = seen_bias_sz;
+          seen_bias = (unsigned int*) realloc(seen_bias, next_bias_sz);
+          memset(reinterpret_cast<unsigned char*>(seen_bias) + old_bias_sz, 0, next_bias_sz - old_bias_sz);
+          seen_bias_sz = next_bias_sz;
           seen_tmax = next_tmax;
           // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
         }
@@ -435,7 +441,10 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
           if(next_f <= focal_cap) {
             heap.insert(next_p);
           } else {
-            open_buckets[next_f - focal_cap - 1].push_back(next_p);
+            const unsigned int bucket = next_f - focal_cap - 1;
+            if(bucket >= open_buckets.size())
+              open_buckets.resize(bucket + 1);
+            open_buckets[bucket].push_back(next_p);
           }
           ++num_generated;
           ++pending;
@@ -449,22 +458,24 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
       }
     }
     // Update the min f-value and focal-weight.
-    f_min = focal_cap+1;
-    if(open_buckets[0].size() == 0) {
-      std::swap(open_buckets[0], open_buckets[1]);
-      f_min++;
-    }
+    const unsigned int bucket_base = focal_cap + 1;
+    size_t first_nonempty = 0;
+    while(first_nonempty < open_buckets.size() && open_buckets[first_nonempty].empty())
+      ++first_nonempty;
+    if(first_nonempty == open_buckets.size())
+      break;
+    f_min = bucket_base + first_nonempty;
     focal_cap = f_weight * f_min;
-    for(unsigned int l : open_buckets[0])
-      heap.insert(l);
-    open_buckets[0].clear();
-    if(f_min == focal_cap) {
-      std::swap(open_buckets[0], open_buckets[1]);
-    } else {
-      for(unsigned int l : open_buckets[1])
+    size_t eligible_count = 0;
+    if(focal_cap >= bucket_base)
+      eligible_count = std::min<size_t>(open_buckets.size(), focal_cap - bucket_base + 1);
+    for(size_t bi = first_nonempty; bi < eligible_count; ++bi) {
+      for(unsigned int l : open_buckets[bi])
         heap.insert(l);
-      open_buckets[1].clear();    
     }
+    open_buckets.erase(open_buckets.begin(), open_buckets.begin() + eligible_count);
+    if(open_buckets.empty())
+      open_buckets.shrink_to_fit();
   }
 #else
   compare_pos cmp { map_size, my_heuristic, res_table, (int) max_plan_len };

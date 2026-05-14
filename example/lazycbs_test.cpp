@@ -56,6 +56,7 @@ int main(int argc, char* argv[]) {
 #endif
 
   std::string inputFile;
+  std::string outputFile = "solver_output.yaml";
   bool verbose = false;
   bool super_verbose = false;
   bool target_symmetry = LAZYCBS_DEFAULT_TARGET_SYMMETRY != 0;
@@ -63,6 +64,8 @@ int main(int argc, char* argv[]) {
   desc.add_options()("help", "produce help message")(
       "input,i", po::value<std::string>(&inputFile)->required(),
       "input file (YAML)")(
+      "output,o", po::value<std::string>(&outputFile),
+      "output file (YAML)")(
       "verbose,v", "enable MAPF solver logging")(
       "super-verbose", "enable MAPF solver logging and print agent paths")(
       "no-target-symmetry", "disable the target-symmetry split")(
@@ -79,8 +82,10 @@ int main(int argc, char* argv[]) {
     po::notify(vm);
     verbose = vm.count("verbose") != 0u;
     super_verbose = vm.count("super-verbose") != 0u;
-    target_symmetry = vm.count("no-target-symmetry") == 0u;
-    conflict_tiebreaker = vm.count("no-conflict-tiebreaker") == 0u;
+    if (vm.count("no-target-symmetry") != 0u)
+      target_symmetry = false;
+    if (vm.count("no-conflict-tiebreaker") != 0u)
+      conflict_tiebreaker = false;
   } catch (po::error& e) {
     std::cerr << e.what() << std::endl << std::endl;
     std::cerr << desc << std::endl;
@@ -137,7 +142,7 @@ int main(int argc, char* argv[]) {
       mapf1.printPaths(stderr);
     }
 
-    std::ofstream out("../example/output_lazycbs.yaml");
+    std::ofstream out(outputFile);
     out << "statistics:" << std::endl;
     out << "  cost: " << solution.first << std::endl;
     out << "  runtime: " << lazycbs_time << std::endl;
