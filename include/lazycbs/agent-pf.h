@@ -273,10 +273,12 @@ class Agent_PF : public propagator, public prop_inst<Agent_PF> {
       history[hist_pos].path.push(p);  
   }
 
-public:
+  public:
   Agent_PF(solver_data* s, intvar _cost, int start_location, int goal_location, const double* heuristic, const bool* map, int map_size, const int* actions_offset,
-    ::std::function<::std::pair<int, bool*>() > _get_reservations)
+    ::std::function<::std::pair<int, bool*>() > _get_reservations,
+    ::std::function<unsigned int(int, int, int)> _get_step_bias)
     : propagator(s), engine(start_location, goal_location, heuristic, map, map_size, actions_offset), get_reservations(_get_reservations)
+    , get_step_bias(_get_step_bias)
     , active_obstacles(map_size)
     , start_pos(start_location), goal_pos(goal_location)
     , cost(_cost), obs_tl(0), hist_pos(0)
@@ -296,7 +298,7 @@ public:
     auto res(get_reservations());
     num_executions++;
     auto target_blocks(build_target_blocks());
-    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first))
+    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first, get_step_bias))
       throw RootFail();
     num_generated += engine.num_generated;
     num_expanded += engine.num_expanded;
@@ -378,7 +380,7 @@ public:
     auto res(get_reservations());
     auto target_blocks(build_target_blocks());
     num_executions++;
-    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first)) {
+    if(!engine.findPath(1.0, &active_obstacles, &target_blocks, res.second, res.first, get_step_bias)) {
       num_generated += engine.num_generated;
       num_expanded += engine.num_expanded;
 
@@ -404,7 +406,7 @@ public:
     auto target_blocks(build_target_blocks());
     num_executions++;
     // if(engine.findPath_upto(ub(cost), &active_obstacles, res.second, res.first)) {
-    if(engine.findPath_upto(ub(cost), &active_obstacles, &target_blocks, res.second, res.first)) {
+    if(engine.findPath_upto(ub(cost), &active_obstacles, &target_blocks, res.second, res.first, get_step_bias)) {
       // Make sure the bypass is reset after backtracking
       if(!has_bypass)
         s->persist.bt_flags.push(&has_bypass);
@@ -431,6 +433,7 @@ public:
   // The search engine
   lazycbs::SingleAgentECBS engine;
   ::std::function<::std::pair<int, bool*>()> get_reservations;
+  ::std::function<unsigned int(int, int, int)> get_step_bias;
 
   // Time-expanded obstacles only. Persistent target locks are passed separately.
   // ::std::vector< ::std::list<::std::pair<int, int> > > active_obstacles;

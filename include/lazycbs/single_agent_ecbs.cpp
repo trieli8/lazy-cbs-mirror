@@ -19,7 +19,9 @@ namespace lazycbs{
 
 unsigned int SingleAgentECBS::seen_sz = 0;
 unsigned char* SingleAgentECBS::seen = nullptr;
-geas::Heap<SingleAgentECBS::compare_ecbs_focal> SingleAgentECBS::heap(SingleAgentECBS::compare_ecbs_focal { 1, SingleAgentECBS::seen, nullptr });
+unsigned int SingleAgentECBS::seen_bias_sz = 0;
+unsigned int* SingleAgentECBS::seen_bias = nullptr;
+geas::Heap<SingleAgentECBS::compare_ecbs_focal> SingleAgentECBS::heap(SingleAgentECBS::compare_ecbs_focal { 1, SingleAgentECBS::seen, SingleAgentECBS::seen_bias, nullptr });
 
 #endif
 
@@ -57,6 +59,12 @@ SingleAgentECBS::SingleAgentECBS(int start_location, int goal_location, const do
   if(seen_sz < LB) {
     seen = (unsigned char*) realloc(seen, sizeof(unsigned char) * LB);
     seen_sz = LB;
+  }
+  if(seen_bias_sz < sizeof(unsigned int) * LB) {
+    size_t old_bias_sz = seen_bias_sz;
+    seen_bias = (unsigned int*) realloc(seen_bias, sizeof(unsigned int) * LB);
+    memset(reinterpret_cast<unsigned char*>(seen_bias) + old_bias_sz, 0, sizeof(unsigned int) * LB - old_bias_sz);
+    seen_bias_sz = sizeof(unsigned int) * LB;
   }
 #endif
 }
@@ -198,7 +206,7 @@ static const unsigned char CONFL_CAP((1u<<7));
 #endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // return true if a path found (and updates vector<int> path) or false if no path exists
-bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len) {
+bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len, step_bias_fn step_bias) {
   // clear data structures if they had been used before
   // (note -- nodes are deleted before findPath returns)
   open_list.clear();
@@ -336,9 +344,10 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
 
   memset(seen, 0, seen_sz);
   unsigned seen_tmax = seen_sz / map_size;
+  memset(seen_bias, 0, seen_bias_sz);
 
   seen[start_location] = 1;
-  heap.lt.map_sz = map_size; heap.lt.my_heuristic = my_heuristic;
+  heap.lt.map_sz = map_size; heap.lt.my_heuristic = my_heuristic; heap.lt.seen_bias = seen_bias;
   heap.insert(start_location);
   ++pending;
   ++num_generated;
@@ -410,28 +419,33 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
           seen_tmax = next_tmax;
           // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
         }
-        unsigned int next_p = next_t * map_size + next_loc;
-        if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
-          unsigned int seen_next = seen[p];
-          if(next_t < max_plan_len && !(seen_next & CONFL_CAP))
-            seen_next += numOfConflictsForStep(loc, next_loc, next_t, res_table, max_plan_len);
-          unsigned int next_f(next_t + my_heuristic[next_loc]);
-          if(!seen[next_p]) {
-            seen[next_p] = seen_next;
+      unsigned int next_p = next_t * map_size + next_loc;
+      if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
+        unsigned int seen_next = seen[p];
+        unsigned int next_bias = seen_bias[p];
+        if(next_t < max_plan_len && !(seen_next & CONFL_CAP))
+          seen_next += numOfConflictsForStep(loc, next_loc, next_t, res_table, max_plan_len);
+        if(step_bias != nullptr)
+          next_bias += step_bias(loc, next_loc, next_t);
+        unsigned int next_f(next_t + my_heuristic[next_loc]);
+        if(!seen[next_p]) {
+          seen[next_p] = seen_next;
+          seen_bias[next_p] = next_bias;
 
-            if(next_f <= focal_cap) {
-              heap.insert(next_p);
-            } else {
-              open_buckets[next_f - focal_cap - 1].push_back(next_p);
-            }
-            ++num_generated;
-            ++pending;
-          } else if(seen_next < seen[next_p]) {
-            seen[next_p] = seen_next;
-            if(next_f <= focal_cap)
-              heap.decrease(next_p);
+          if(next_f <= focal_cap) {
+            heap.insert(next_p);
+          } else {
+            open_buckets[next_f - focal_cap - 1].push_back(next_p);
           }
+          ++num_generated;
+          ++pending;
+        } else if(seen_next < seen[next_p] || (seen_next == seen[next_p] && next_bias < seen_bias[next_p])) {
+          seen[next_p] = seen_next;
+          seen_bias[next_p] = next_bias;
+          if(next_f <= focal_cap)
+            heap.decrease(next_p);
         }
+      }
       }
     }
     // Update the min f-value and focal-weight.
@@ -522,6 +536,11 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
         seen = (unsigned char*) realloc(seen, next_sz);
         memset(seen + seen_sz, 0, next_sz - seen_sz);
         seen_sz = next_sz;
+        unsigned next_bias_sz = sizeof(unsigned int) * map_size * next_tmax;
+        size_t old_bias_sz = seen_bias_sz;
+        seen_bias = (unsigned int*) realloc(seen_bias, next_bias_sz);
+        memset(reinterpret_cast<unsigned char*>(seen_bias) + old_bias_sz, 0, next_bias_sz - old_bias_sz);
+        seen_bias_sz = next_bias_sz;
         seen_tmax = next_tmax;
         // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
       }
@@ -545,7 +564,7 @@ bool SingleAgentECBS::findPath(double f_weight, const constraints_t* constraints
 }
 
 
-bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len) {
+bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len, step_bias_fn step_bias) {
 #ifndef CHEAP_SEARCH
   assert(0);
   return false;
@@ -559,12 +578,13 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
   }
 
   unsigned int pending = 0;
-     
+
   memset(seen, 0, seen_sz);
   unsigned seen_tmax = seen_sz / map_size;
+  memset(seen_bias, 0, seen_bias_sz);
 
   seen[start_location] = 1;
-  heap.lt.map_sz = map_size; heap.lt.my_heuristic = my_heuristic;
+  heap.lt.map_sz = map_size; heap.lt.my_heuristic = my_heuristic; heap.lt.seen_bias = seen_bias;
   heap.insert(start_location);
   ++pending;
   ++num_generated;
@@ -631,6 +651,11 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
         seen = (unsigned char*) realloc(seen, next_sz);
         memset(seen + seen_sz, 0, next_sz - seen_sz);
         seen_sz = next_sz;
+        unsigned next_bias_sz = sizeof(unsigned int) * map_size * next_tmax;
+        size_t old_bias_sz = seen_bias_sz;
+        seen_bias = (unsigned int*) realloc(seen_bias, next_bias_sz);
+        memset(reinterpret_cast<unsigned char*>(seen_bias) + old_bias_sz, 0, next_bias_sz - old_bias_sz);
+        seen_bias_sz = next_bias_sz;
         seen_tmax = next_tmax;
         // fprintf(stderr, "%% New Tmax: %d (%d Mb)\n", seen_tmax, seen_sz / (1024 * 1024));
       }
@@ -638,20 +663,25 @@ bool SingleAgentECBS::findPath_upto(double f_cap, const constraints_t* constrain
       if (!my_map[next_loc] && !isConstrained(loc, next_loc, next_t, constraints, persistent_constraints)) {
         // if that grid is not blocked
         unsigned int seen_next = seen[p];
+        unsigned int next_bias = seen_bias[p];
         if(next_t < max_plan_len && !(seen_next & CONFL_CAP))
           seen_next += numOfConflictsForStep(loc, next_loc, next_t, res_table, max_plan_len);
+        if(step_bias != nullptr)
+          next_bias += step_bias(loc, next_loc, next_t);
         unsigned int next_f(next_t + my_heuristic[next_loc]);
         if(f_cap <= next_f)
           continue;
 
         if(!seen[next_p]) {
           seen[next_p] = seen_next;
+          seen_bias[next_p] = next_bias;
           // Check the f-value of this.
           heap.insert(next_p);
           ++num_generated;
           ++pending;
-        } else if(seen_next < seen[next_p]) {
+        } else if(seen_next < seen[next_p] || (seen_next == seen[next_p] && next_bias < seen_bias[next_p])) {
           seen[next_p] = seen_next;
+          seen_bias[next_p] = next_bias;
           heap.decrease(next_p);
         }
       }
