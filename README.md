@@ -1,11 +1,26 @@
 # Lazy CBS: A multi-agent pathfinding solver, using a lazy clause generation backend
 
 ## Usage
-```
-1. Clone the repository along with its submodules.
-2. mkdir build && cd build
-3. cmake ..
-4. make
+Build one variant per build directory so you can run experiments side by side:
+
+```bash
+./build_variants.sh
 ```
 
-After following the above steps to build the lazycbs module, use `./lazycbs_mapf -i ../example/input.yaml` command inside the build folder to run the solver for given input yaml file.
+That creates:
+
+* `build-og/og`
+* `build-target/target`
+* `build-confilct/confilct`
+
+Each binary still accepts `--no-target-symmetry` and `--no-conflict-tiebreaker` if you want to override the baked-in defaults for a specific run.
+
+If you only want the default build, use:
+
+```bash
+mkdir build && cd build
+cmake ..
+make
+```
+
+Then run `./lazycbs_mapf -i ../example/input.yaml` from that build folder.
