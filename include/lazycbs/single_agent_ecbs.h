@@ -9,7 +9,6 @@
 #include <vector>
 #include <list>
 #include <utility>
-#include <functional>
 #include <random>
 
 #include <lazycbs/egraph_reader.h>
@@ -24,8 +23,6 @@ using std::cout;
 namespace lazycbs{
 class SingleAgentECBS {
  public:
-  using step_bias_fn = std::function<unsigned int(int, int, int)>;
-
   // define typedefs (will also be used in ecbs_search)
   typedef boost::heap::fibonacci_heap< Node* , boost::heap::compare<Node::compare_node> > heap_open_t;
   typedef boost::heap::fibonacci_heap< Node* , boost::heap::compare<Node::secondary_compare_node> > heap_focal_t;
@@ -75,8 +72,6 @@ class SingleAgentECBS {
 #ifdef CHEAP_SEARCH
   static unsigned char* seen;
   static unsigned int seen_sz; // How many time-steps?
-  static unsigned int* seen_bias;
-  static unsigned int seen_bias_sz;
 
   // Still keep a heap for things on the focal list,
   // but buckets for open nodes. floor(focal_max)+1, floor(focal_max)+2.
@@ -90,10 +85,6 @@ class SingleAgentECBS {
     bool operator()(unsigned int x, unsigned int y) const {
       if(seen[x] != seen[y])
         return seen[x] < seen[y];
-      unsigned int bx = seen_bias ? seen_bias[x] : 0;
-      unsigned int by = seen_bias ? seen_bias[y] : 0;
-      if(bx != by)
-        return bx < by;
       // Otherwise, prefer shorter h-values.
       if(H(x) != H(y))
         return H(x) < H(y);
@@ -103,7 +94,6 @@ class SingleAgentECBS {
    
     unsigned int map_sz;
     unsigned char*& seen;
-    unsigned int*& seen_bias;
     const double* my_heuristic;
   };
 
@@ -161,8 +151,8 @@ class SingleAgentECBS {
   /* Returns true if a collision free path found (with cost up to f_weight * f-min) while
      minimizing the number of internal conflicts (that is conflicts with known_paths for other agents found so far).
   */
-  bool findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len, step_bias_fn step_bias = nullptr);
-  bool findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len, step_bias_fn step_bias = nullptr);
+  bool findPath(double f_weight, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len);
+  bool findPath_upto(double f_cap, const constraints_t* constraints, const persistent_constraints_t* persistent_constraints, bool* res_table, size_t max_plan_len);
 
   ~SingleAgentECBS();
 };

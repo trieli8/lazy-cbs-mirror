@@ -96,32 +96,6 @@ class MAPF_Solver {
   };
 
   enum ConflictType { C_MUTEX, C_BARRIER, C_TARGET };
-  struct conflict_key {
-    ConflictType type;
-    int timestamp;
-    int a1;
-    int a2;
-    int loc1;
-    int loc2;
-  };
-  struct conflict_key_hasher {
-    size_t operator()(const conflict_key& k) const {
-      size_t h(5331);
-      h = ((h<<5) + static_cast<size_t>(k.type))^h;
-      h = ((h<<5) + k.timestamp)^h;
-      h = ((h<<5) + k.a1)^h;
-      h = ((h<<5) + k.a2)^h;
-      h = ((h<<5) + k.loc1)^h;
-      h = ((h<<5) + k.loc2)^h;
-      return h;
-    }
-  };
-  struct conflict_key_eq {
-    bool operator()(const conflict_key& x, const conflict_key& y) const {
-      return x.type == y.type && x.timestamp == y.timestamp &&
-        x.a1 == y.a1 && x.a2 == y.a2 && x.loc1 == y.loc1 && x.loc2 == y.loc2;
-    }
-  };
   struct barrier_info {
     int s_loc; // Start corner
     int e_loc; // Exit corner
@@ -186,7 +160,6 @@ class MAPF_Solver {
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose);
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose, bool super_verbose);
   MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose, bool super_verbose, bool enable_target_symmetry);
-  MAPF_Solver(const  MapLoader& ml, const  AgentsLoader& al, const  EgraphReader& egr, int cost_ub, bool verbose, bool super_verbose, bool enable_target_symmetry, bool enable_conflict_tiebreaker);
 
   // Problem information
   const  MapLoader* ml;
@@ -214,7 +187,6 @@ class MAPF_Solver {
   geas::vec<target_data> target_constraints;
   // conflict new_conflict;
   geas::vec<conflict> new_conflicts;
-  ::std::unordered_map<conflict_key, unsigned int, conflict_key_hasher, conflict_key_eq> conflict_table;
   p_sparseset agent_set;
 
   // For unsat-core reasoning
@@ -225,7 +197,6 @@ class MAPF_Solver {
   bool verbose;
   bool super_verbose;
   bool enable_target_symmetry;
-  bool enable_conflict_tiebreaker;
 
   // How many high-level conflicts have been processed?
   int HL_conflicts;
@@ -257,7 +228,6 @@ class MAPF_Solver {
   int monotoneSubchainEnd(int dy, int dx, int ai, int t) const;
 
   ::std::pair<int, bool*> retrieve_reservation_table(int ai);
-  unsigned int conflict_step_bias(int excl, int curr_id, int next_id, int next_timestep) const;
   void tracef(const char* fmt, ...) const;
 
   ~MAPF_Solver();

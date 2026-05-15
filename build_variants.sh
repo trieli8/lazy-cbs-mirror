@@ -18,7 +18,6 @@ build_variant() {
   cmake --build "${build_dir}" -- -j1
 }
 
-build_variant lazycbs_mapf clean-local
 build_variant og
 build_variant target
 build_variant confilct

@@ -51,16 +51,12 @@ int main(int argc, char* argv[]) {
 #ifndef LAZYCBS_DEFAULT_TARGET_SYMMETRY
 #define LAZYCBS_DEFAULT_TARGET_SYMMETRY 1
 #endif
-#ifndef LAZYCBS_DEFAULT_CONFLICT_TIEBREAKER
-#define LAZYCBS_DEFAULT_CONFLICT_TIEBREAKER 1
-#endif
 
   std::string inputFile;
   std::string outputFile = "solver_output.yaml";
   bool verbose = false;
   bool super_verbose = false;
   bool target_symmetry = LAZYCBS_DEFAULT_TARGET_SYMMETRY != 0;
-  bool conflict_tiebreaker = LAZYCBS_DEFAULT_CONFLICT_TIEBREAKER != 0;
   desc.add_options()("help", "produce help message")(
       "input,i", po::value<std::string>(&inputFile)->required(),
       "input file (YAML)")(
@@ -68,8 +64,7 @@ int main(int argc, char* argv[]) {
       "output file (YAML)")(
       "verbose,v", "enable MAPF solver logging")(
       "super-verbose", "enable MAPF solver logging and print agent paths")(
-      "no-target-symmetry", "disable the target-symmetry split")(
-      "no-conflict-tiebreaker", "disable conflict-table tie-breaking in low-level search");
+      "no-target-symmetry", "disable the target-symmetry split");
 
   try {
     po::variables_map vm;
@@ -84,8 +79,6 @@ int main(int argc, char* argv[]) {
     super_verbose = vm.count("super-verbose") != 0u;
     if (vm.count("no-target-symmetry") != 0u)
       target_symmetry = false;
-    if (vm.count("no-conflict-tiebreaker") != 0u)
-      conflict_tiebreaker = false;
   } catch (po::error& e) {
     std::cerr << e.what() << std::endl << std::endl;
     std::cerr << desc << std::endl;
@@ -119,7 +112,7 @@ int main(int argc, char* argv[]) {
   lazycbs::MapLoader ml(dimx, dimy, obstacles);
   lazycbs::AgentsLoader al(starts, goals);
   lazycbs::EgraphReader egr;
-  lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8, verbose, super_verbose, target_symmetry, conflict_tiebreaker);
+  lazycbs::MAPF_Solver mapf1(ml, al, egr, 1e8, verbose, super_verbose, target_symmetry);
 
   clear_handlers();
 

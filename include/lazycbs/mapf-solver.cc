@@ -20,33 +20,6 @@ static ::std::pair<int, bool*> mapf_get_res_table(MAPF_Solver* m, int excl) {
   return m->retrieve_reservation_table(excl);
 }
 
-static unsigned int mapf_get_step_bias(MAPF_Solver* m, int excl, int curr_id, int next_id, int next_timestep) {
-  return m->conflict_step_bias(excl, curr_id, next_id, next_timestep);
-}
-
-static MAPF_Solver::conflict_key make_conflict_key(const MAPF_Solver::conflict& c) {
-  MAPF_Solver::conflict_key key;
-  key.type = c.type;
-  key.timestamp = c.timestamp;
-  key.a1 = c.a1;
-  key.a2 = c.a2;
-  key.loc1 = c.p.loc1;
-  key.loc2 = c.p.loc2;
-
-  if(c.type == MAPF_Solver::C_MUTEX) {
-    if(key.a2 < key.a1)
-      ::std::swap(key.a1, key.a2);
-    if(key.loc2 >= 0 && key.loc2 > key.loc1)
-      ::std::swap(key.loc1, key.loc2);
-  }
-
-  return key;
-}
-
-static void record_conflict(MAPF_Solver& mapf, const MAPF_Solver::conflict& c) {
-  ++mapf.conflict_table[make_conflict_key(c)];
-}
-
 MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB)
   : MAPF_Solver(_ml, _al, _egr, UB, false) {
 }
@@ -56,14 +29,10 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
 }
 
 MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose, bool _super_verbose)
-  : MAPF_Solver(_ml, _al, _egr, UB, _verbose, _super_verbose, true, true) {
+  : MAPF_Solver(_ml, _al, _egr, UB, _verbose, _super_verbose, true) {
 }
 
 MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose, bool _super_verbose, bool _enable_target_symmetry)
-  : MAPF_Solver(_ml, _al, _egr, UB, _verbose, _super_verbose, _enable_target_symmetry, true) {
-}
-
-MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoader& _al, const lazycbs::EgraphReader& _egr, int UB, bool _verbose, bool _super_verbose, bool _enable_target_symmetry, bool _enable_conflict_tiebreaker)
   : ml(&_ml), al(&_al), egr(&_egr), map_size(ml->rows * ml->cols)
   , reservation_table(map_size, false), cmap(map_size, -1), nmap(map_size, -1)
   , agent_set(al->num_of_agents)
@@ -71,9 +40,7 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
   , HL_conflicts(0)
   , verbose(_verbose)
   , super_verbose(_super_verbose)
-  , enable_target_symmetry(_enable_target_symmetry)
-  , enable_conflict_tiebreaker(_enable_conflict_tiebreaker) {
-
+  , enable_target_symmetry(_enable_target_symmetry) {
     int num_of_agents = al->num_of_agents;
     cost_lb = 0;
 
@@ -87,8 +54,7 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
 
       geas::intvar cv(s.new_intvar(0, UB));
       Agent_PF* pf(new Agent_PF(s.data, cv, init_loc, goal_loc, ch.getHVals(), ml->get_map(), map_size, ml->actions_offset,
-        ::std::bind(mapf_get_res_table, this, ai),
-        ::std::bind(mapf_get_step_bias, this, ai, ::std::placeholders::_1, ::std::placeholders::_2, ::std::placeholders::_3)));
+        ::std::bind(mapf_get_res_table, this, ai)));
       pathfinders.push(pf);
 
       cost_lb += pf->pathCost();
@@ -99,7 +65,6 @@ MAPF_Solver::MAPF_Solver(const lazycbs::MapLoader& _ml, const lazycbs::AgentsLoa
     tracef("MAPF init: agents=%d map=%dx%d initial_cost_lb=%d cost_ub=%d",
       num_of_agents, ml->rows, ml->cols, cost_lb, cost_ub);
     tracef("MAPF init: target symmetry %s", enable_target_symmetry ? "enabled" : "disabled");
-    tracef("MAPF init: conflict tiebreaker %s", enable_conflict_tiebreaker ? "enabled" : "disabled");
 }
 
 void MAPF_Solver::tracef(const char* fmt, ...) const {
@@ -280,8 +245,8 @@ void MAPF_Solver::printStats(FILE* f) const {
     LL_executions += p->num_executions;
   }
   fprintf(f,
-    "cost_lb=%d, solver_conflicts=%d, ll_expanded=%d, ll_generated=%d, hl_conflicts=%d, conflict_table=%zu, ll_executions=%d",
-    cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, conflict_table.size(), LL_executions);
+    "cost_lb=%d, solver_conflicts=%d, ll_expanded=%d, ll_generated=%d, hl_conflicts=%d, ll_executions=%d",
+    cost_lb, s.data->stats.conflicts, LL_num_expanded, LL_num_generated, HL_conflicts, LL_executions);
   // ::std::cout << "cost_lb=" << cost_lb << ", solver_conflicts=" << s.data->stats.conflicts
   //             << ", ll_expanded=" << LL_num_expanded << ", ll_generated=" << LL_num_generated
   //             << ", hl_conflicts=" << HL_conflicts << ", ll_executions=" << LL_executions;
@@ -328,45 +293,6 @@ inline bool agentStaysAtGoal(Agent_PF* p, int t) {
   if(P.size() == 0)
     return false;
   return t >= static_cast<int>(P.size()) - 1 && agentPosition(p, t) == p->goal_pos;
-}
-
-unsigned int MAPF_Solver::conflict_step_bias(int excl, int curr_id, int next_id, int next_timestep) const {
-  if(!enable_conflict_tiebreaker)
-    return 0;
-  if(next_timestep <= 0 || excl < 0 || excl >= pathfinders.size())
-    return 0;
-
-  auto lookup = [this](const conflict& c) -> unsigned int {
-    auto it(conflict_table.find(make_conflict_key(c)));
-    return it == conflict_table.end() ? 0u : (*it).second;
-  };
-
-  unsigned int score = 0;
-  bool excl_at_goal = agentStaysAtGoal(pathfinders[excl], next_timestep);
-
-  for(int aj = 0; aj < pathfinders.size(); ++aj) {
-    if(aj == excl)
-      continue;
-
-    int other_curr = agentPosition(pathfinders[aj], next_timestep - 1);
-    int other_next = agentPosition(pathfinders[aj], next_timestep);
-    bool other_at_goal = agentStaysAtGoal(pathfinders[aj], next_timestep);
-
-    if(next_id == other_next) {
-      if(excl_at_goal || other_at_goal) {
-        score += lookup(conflict::target(next_timestep, excl, aj, next_id, -1));
-        score += lookup(conflict::target(next_timestep, aj, excl, next_id, -1));
-      } else {
-        score += lookup(conflict(next_timestep, excl, aj, next_id, -1));
-      }
-    }
-
-    if(next_timestep > 0 && curr_id == other_next && next_id == other_curr) {
-      score += lookup(conflict(next_timestep - 1, excl, aj, next_id, curr_id));
-    }
-  }
-
-  return score;
 }
 
 inline void clear_map(MAPF_Solver* s, geas::vec<int>& map, int t) {
@@ -483,7 +409,6 @@ bool MAPF_Solver::checkForConflicts(void) {
           if(!agentStaysAtGoal(pathfinders[ai], t))
             ::std::swap(ai, aj);
           conflict c(conflict::target(t, ai, aj, loc, -1));
-          record_conflict(*this, c);
           new_conflicts.push(c);
 
           clear_map(this, cmap, t-1);
@@ -562,14 +487,12 @@ bool MAPF_Solver::checkForConflicts(void) {
           int t0(stH - abs(row_of(sH) - row_of(locS)));
           assert(t0 == stV - abs(col_of(sV) - col_of(locS)));
           conflict c(conflict::barrier(t0, ai, aj, locS, locE));
-          record_conflict(*this, c);
           new_conflicts.push(c);
         } else {
 #ifdef MAPF_NO_RECTANGLES
         fallback:
 #endif
           conflict c(t, ai, nmap[loc], loc, -1);
-          record_conflict(*this, c);
           new_conflicts.push(c);
         }
 
@@ -586,7 +509,6 @@ bool MAPF_Solver::checkForConflicts(void) {
         if(cmap[rloc] == ai) {
           // Edge conflict
           conflict c(t-1, ai, cmap[loc], loc, rloc);
-          record_conflict(*this, c);
           new_conflicts.push(c);
           clear_map(this, cmap, t-1);
           clear_map(this, nmap, t);

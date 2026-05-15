@@ -13,7 +13,7 @@ That creates:
 * `build-target/target`
 * `build-confilct/confilct`
 
-Each binary still accepts `--no-target-symmetry` and `--no-conflict-tiebreaker` if you want to override the baked-in defaults for a specific run.
+Each binary still accepts `--no-target-symmetry` if you want to override the baked-in defaults for a specific run.
 
 If you only want the default build, use:
 
